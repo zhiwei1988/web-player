@@ -1,0 +1,21 @@
+{
+  "name": "websocket-media-player",
+  "version": "1.0.0",
+  "description": "WebSocket流媒体播放器 - 快速验证Demo",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "websocket",
+    "media",
+    "player",
+    "streaming"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.14.2"
+  }
+}

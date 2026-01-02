@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket媒体播放器 - 连接测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 900px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f8f9fa;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .status {
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 16px;
+        }
+        .connecting {
+            background: #fff3cd;
+            color: #856404;
+            border: 2px solid #ffc107;
+        }
+        .connected {
+            background: #d4edda;
+            color: #155724;
+            border: 2px solid #28a745;
+        }
+        .disconnected {
+            background: #f8d7da;
+            color: #721c24;
+            border: 2px solid #dc3545;
+        }
+        canvas {
+            border: 2px solid #ddd;
+            width: 100%;
+            max-width: 640px;
+            height: 360px;
+            background: #000;
+            display: block;
+            margin: 20px auto;
+        }
+        .controls {
+            margin: 20px 0;
+            padding: 15px;
+            background: white;
+            border-radius: 6px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        input[type="text"] {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            padding: 10px 20px;
+            margin-right: 10px;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+        button:hover {
+            opacity: 0.8;
+        }
+        button:first-of-type {
+            background: #28a745;
+            color: white;
+        }
+        button:last-of-type {
+            background: #dc3545;
+            color: white;
+        }
+        .stats {
+            font-family: 'Courier New', monospace;
+            background: white;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 6px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .stats div {
+            padding: 5px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .stats div:last-child {
+            border-bottom: none;
+        }
+        .stats span {
+            color: #007bff;
+            font-weight: bold;
+        }
+        .console-wrapper {
+            margin-top: 20px;
+            background: white;
+            padding: 15px;
+            border-radius: 6px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .console-wrapper h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        #console {
+            font-family: 'Courier New', monospace;
+            background: #1e1e1e;
+            color: #00ff00;
+            padding: 15px;
+            height: 250px;
+            overflow-y: auto;
+            border-radius: 4px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        .info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        .info strong {
+            color: #0c5460;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎬 WebSocket 流媒体播放器 - 快速验证</h1>
+
+    <div class="info">
+        <strong>📋 说明：</strong>这是一个快速验证Demo，用于测试WebSocket连接和数据接收功能。<br>
+        <strong>🎯 验证目标：</strong>WS-001（协议支持）、WS-003（二进制数据接收）、WS-005（连接状态监控）
+    </div>
+
+    <div class="controls">
+        <label for="wsUrl" style="font-weight: bold; margin-right: 10px;">WebSocket地址：</label>
+        <input type="text" id="wsUrl" placeholder="ws://localhost:8080" value="ws://localhost:8080" style="width: 300px;">
+        <button onclick="connect()">🔌 连接</button>
+        <button onclick="disconnect()">❌ 断开</button>
+    </div>
+
+    <div id="status" class="status disconnected">状态：未连接</div>
+
+    <canvas id="videoCanvas" width="640" height="360"></canvas>
+
+    <div class="stats">
+        <h3 style="margin-top: 0; color: #333;">📊 连接统计</h3>
+        <div>📥 接收字节数: <span id="bytesReceived">0</span> bytes</div>
+        <div>📦 接收消息数: <span id="messagesReceived">0</span> 条</div>
+        <div>⏱️ 连接时长: <span id="connectionTime">0</span> 秒</div>
+        <div>📈 平均速率: <span id="dataRate">0</span> KB/s</div>
+    </div>
+
+    <div class="console-wrapper">
+        <h3>🖥️ 控制台日志（最近20条）</h3>
+        <div id="console"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        let stats = {
+            bytesReceived: 0,
+            messagesReceived: 0,
+            connectionStartTime: null,
+            lastUpdateTime: null,
+            lastBytesReceived: 0
+        };
+        let logs = [];
+        let statsInterval = null;
+
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
+            logs.push(`${prefix} [${timestamp}] ${message}`);
+            if (logs.length > 20) logs.shift();
+            document.getElementById('console').innerHTML = logs.join('<br>');
+            console.log(message);
+        }
+
+        function updateStatus(state, message) {
+            const statusEl = document.getElementById('status');
+            statusEl.className = `status ${state}`;
+            statusEl.textContent = `状态：${message}`;
+        }
+
+        function updateStats() {
+            document.getElementById('bytesReceived').textContent = stats.bytesReceived.toLocaleString();
+            document.getElementById('messagesReceived').textContent = stats.messagesReceived.toLocaleString();
+
+            if (stats.connectionStartTime) {
+                const duration = Math.floor((Date.now() - stats.connectionStartTime) / 1000);
+                document.getElementById('connectionTime').textContent = duration;
+
+                // Calculate data rate
+                const currentTime = Date.now();
+                if (stats.lastUpdateTime) {
+                    const timeDiff = (currentTime - stats.lastUpdateTime) / 1000; // seconds
+                    const bytesDiff = stats.bytesReceived - stats.lastBytesReceived;
+                    const rate = (bytesDiff / timeDiff / 1024).toFixed(2); // KB/s
+                    document.getElementById('dataRate').textContent = rate;
+                }
+                stats.lastUpdateTime = currentTime;
+                stats.lastBytesReceived = stats.bytesReceived;
+            }
+        }
+
+        function connect() {
+            const url = document.getElementById('wsUrl').value || 'ws://localhost:8080';
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                log('已存在连接，请先断开', 'error');
+                return;
+            }
+
+            updateStatus('connecting', '正在连接...');
+            log(`正在连接到 ${url}`);
+
+            try {
+                ws = new WebSocket(url);
+                ws.binaryType = 'arraybuffer';
+
+                ws.onopen = () => {
+                    stats.connectionStartTime = Date.now();
+                    stats.lastUpdateTime = Date.now();
+                    stats.lastBytesReceived = 0;
+                    updateStatus('connected', `已连接到 ${url}`);
+                    log('WebSocket 连接成功！', 'success');
+
+                    // Start stats update interval
+                    if (statsInterval) clearInterval(statsInterval);
+                    statsInterval = setInterval(() => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            updateStats();
+                        }
+                    }, 1000);
+                };
+
+                ws.onmessage = (event) => {
+                    stats.messagesReceived++;
+
+                    if (event.data instanceof ArrayBuffer) {
+                        stats.bytesReceived += event.data.byteLength;
+                        log(`接收二进制数据: ${event.data.byteLength} 字节 (类型: ArrayBuffer)`);
+                    } else if (event.data instanceof Blob) {
+                        stats.bytesReceived += event.data.size;
+                        log(`接收二进制数据: ${event.data.size} 字节 (类型: Blob)`);
+                    } else {
+                        const size = new Blob([event.data]).size;
+                        stats.bytesReceived += size;
+                        const preview = event.data.length > 50 ? event.data.substring(0, 50) + '...' : event.data;
+                        log(`接收文本数据: ${preview}`);
+                    }
+
+                    updateStats();
+                };
+
+                ws.onerror = (error) => {
+                    log(`WebSocket 错误: ${error}`, 'error');
+                    updateStatus('disconnected', '连接错误');
+                };
+
+                ws.onclose = (event) => {
+                    log(`WebSocket 关闭: code=${event.code}, reason=${event.reason || '无'}`, 'error');
+                    updateStatus('disconnected', '连接已断开');
+                    stats.connectionStartTime = null;
+                    if (statsInterval) {
+                        clearInterval(statsInterval);
+                        statsInterval = null;
+                    }
+                };
+            } catch (error) {
+                log(`连接异常: ${error.message}`, 'error');
+                updateStatus('disconnected', '连接失败');
+            }
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+                log('主动断开连接', 'info');
+                if (statsInterval) {
+                    clearInterval(statsInterval);
+                    statsInterval = null;
+                }
+            }
+        }
+
+        // Initialize canvas
+        const canvas = document.getElementById('videoCanvas');
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#fff';
+        ctx.font = '20px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('等待连接...', canvas.width / 2, canvas.height / 2);
+
+        // Initial log
+        log('页面加载完成，准备就绪', 'success');
+    </script>
+</body>
+</html>
