@@ -1,1 +1,14 @@
 node_modules
+
+# 构建产物
+dist/
+ffmpeg-build/
+third_party/ffmpeg-*/
+
+# 临时文件
+*.o
+*.a
+*.wasm.tmp
+*.log
+.emscripten_cache/
+.emscripten_ports/

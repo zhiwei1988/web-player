@@ -5,7 +5,11 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "build:ffmpeg": "bash build/build_ffmpeg.sh",
+    "build:wasm": "bash build/build_wasm.sh",
+    "build:all": "npm run build:ffmpeg && npm run build:wasm",
+    "clean": "rm -rf dist/ ffmpeg-build/ third_party/ffmpeg-*"
   },
   "keywords": [
     "websocket",
