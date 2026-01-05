@@ -1,9 +1,61 @@
 const WebSocket = require('ws');
+const fs = require('fs');
+const path = require('path');
 
 // Configuration
 const PORT = 8080;
 const SEND_INTERVAL = 1000; // Send data every 1 second
 const CHUNK_SIZE = 1024 * 10; // 10KB per chunk
+
+// H.264 test video configuration
+const USE_TEST_VIDEO = true;  // Enable H.264 test video
+const TEST_VIDEO_PATH = './tests/fixtures/test_video.h264';
+const NAL_SEND_INTERVAL = 33;  // ~30fps (milliseconds)
+
+// Parse H.264 NAL units from buffer
+function parseH264NALUnits(buffer) {
+    const nalUnits = [];
+    let start = 0;
+
+    // Find NAL start codes: 0x00 0x00 0x00 0x01 or 0x00 0x00 0x01
+    for (let i = 0; i < buffer.length - 3; i++) {
+        const is4ByteStart = buffer[i] === 0 && buffer[i+1] === 0 &&
+                             buffer[i+2] === 0 && buffer[i+3] === 1;
+        const is3ByteStart = buffer[i] === 0 && buffer[i+1] === 0 &&
+                             buffer[i+2] === 1;
+
+        if (is4ByteStart || is3ByteStart) {
+            if (start > 0) {
+                nalUnits.push(buffer.slice(start, i));
+            }
+            start = i;
+        }
+    }
+
+    // Add the last NAL unit
+    if (start > 0 && start < buffer.length) {
+        nalUnits.push(buffer.slice(start));
+    }
+
+    return nalUnits;
+}
+
+// Load H.264 test video file
+let testVideoData = null;
+let nalUnits = [];
+
+if (USE_TEST_VIDEO) {
+    try {
+        testVideoData = fs.readFileSync(TEST_VIDEO_PATH);
+        nalUnits = parseH264NALUnits(testVideoData);
+        console.log(`✅ 已加载测试视频: ${TEST_VIDEO_PATH}`);
+        console.log(`📦 NAL 单元数量: ${nalUnits.length}`);
+        console.log(`📊 文件大小: ${(testVideoData.length / 1024).toFixed(2)} KB`);
+    } catch (error) {
+        console.error(`❌ 无法加载测试视频文件: ${error.message}`);
+        console.log('⚠️  将回退到发送随机数据');
+    }
+}
 
 // Create WebSocket server
 const wss = new WebSocket.Server({ port: PORT });
@@ -74,28 +126,44 @@ wss.on('connection', (ws, req) => {
         timestamp: Date.now()
     }));
 
-    // Start sending mock data
+    // Start sending data (H.264 NAL units or mock data)
     const dataInterval = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
-            // Simulate sending video frame data
-            const mockData = generateMockData(CHUNK_SIZE);
-            const frameHeader = generateVideoFrameHeader();
+            let dataToSend;
+            let dataSize;
 
-            try {
-                // Send binary data
-                ws.send(mockData);
+            if (USE_TEST_VIDEO && nalUnits.length > 0) {
+                // Send H.264 NAL units (loop playback)
+                const nalIndex = connectionInfo.messagesSent % nalUnits.length;
+                dataToSend = nalUnits[nalIndex];
+                dataSize = dataToSend.length;
 
-                connectionInfo.messagesSent++;
-                connectionInfo.bytesSent += CHUNK_SIZE;
+                // Log every 30 frames (1 second at 30fps)
+                if (nalIndex % 30 === 0) {
+                    console.log(`📤 [连接 #${clientId}] 发送 NAL 单元 ${nalIndex}/${nalUnits.length} (${dataSize} bytes)`);
+                }
+            } else {
+                // Fallback to random data
+                dataToSend = generateMockData(CHUNK_SIZE);
+                dataSize = CHUNK_SIZE;
 
-                // Log every 5 seconds
                 if (connectionInfo.messagesSent % 5 === 0) {
                     const mbSent = (connectionInfo.bytesSent / 1024 / 1024).toFixed(2);
                     console.log(`📤 [连接 #${clientId}] 已发送 ${connectionInfo.messagesSent} 条消息，共 ${mbSent} MB`);
                 }
+            }
+
+            try {
+                ws.send(dataToSend);
+                connectionInfo.messagesSent++;
+                connectionInfo.bytesSent += dataSize;
 
                 // Occasionally send metadata as text
                 if (connectionInfo.messagesSent % 10 === 0) {
+                    const frameHeader = USE_TEST_VIDEO ?
+                        { type: 'video', codec: 'h264', timestamp: Date.now(), frameNumber: connectionInfo.messagesSent, size: dataSize } :
+                        generateVideoFrameHeader();
+
                     ws.send(JSON.stringify({
                         type: 'metadata',
                         frameInfo: frameHeader,
@@ -110,7 +178,7 @@ wss.on('connection', (ws, req) => {
                 console.error(`❌ [连接 #${clientId}] 发送数据失败:`, error.message);
             }
         }
-    }, SEND_INTERVAL);
+    }, USE_TEST_VIDEO ? NAL_SEND_INTERVAL : SEND_INTERVAL);
 
     // Handle incoming messages
     ws.on('message', (message) => {

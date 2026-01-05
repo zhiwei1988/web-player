@@ -5,11 +5,14 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js",
+    "dev": "npm run build:ts && node server.js",
+    "build:ts": "tsc",
     "build:ffmpeg": "bash build/build_ffmpeg.sh",
     "build:wasm": "bash build/build_wasm.sh",
-    "build:all": "npm run build:ffmpeg && npm run build:wasm",
-    "clean": "rm -rf dist/ ffmpeg-build/ third_party/ffmpeg-*"
+    "build:decoder": "npm run build:ffmpeg && npm run build:wasm",
+    "build:all": "npm run build:decoder && npm run build:ts",
+    "clean": "rm -rf dist/js/ ffmpeg-build/ third_party/ffmpeg-*",
+    "watch": "tsc --watch"
   },
   "keywords": [
     "websocket",
@@ -21,5 +24,9 @@
   "license": "MIT",
   "dependencies": {
     "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/emscripten": "^1.39.6"
   }
 }

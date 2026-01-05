@@ -49,6 +49,7 @@ LDFLAGS=(
 
 EMFLAGS=(
     -s WASM=1
+    -s WASM_BIGINT=1
     -s MODULARIZE=1
     -s EXPORT_ES6=1
     -s EXPORT_NAME="createDecoderModule"
@@ -59,6 +60,9 @@ EMFLAGS=(
     -s NO_EXIT_RUNTIME=1
     -s FILESYSTEM=0
     -s ENVIRONMENT='web,worker'
+    -s STANDALONE_WASM=0
+    -sASSERTIONS=1
+    -s INCOMING_MODULE_JS_API=locateFile
     -s EXPORTED_FUNCTIONS='[
         "_decoder_init_video",
         "_decoder_send_video_packet",
