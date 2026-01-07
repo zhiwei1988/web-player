@@ -14,40 +14,111 @@ const NAL_SEND_INTERVAL = 40;  // ~25fps (milliseconds)
 function parseH264NALUnits(buffer) {
     const nalUnits = [];
     let start = 0;
+    let firstNalFound = false;
 
     // Find NAL start codes: 0x00 0x00 0x00 0x01 or 0x00 0x00 0x01
     for (let i = 0; i < buffer.length - 3; i++) {
+        // Check for 4-byte start code first
         const is4ByteStart = buffer[i] === 0 && buffer[i+1] === 0 &&
                              buffer[i+2] === 0 && buffer[i+3] === 1;
-        const is3ByteStart = buffer[i] === 0 && buffer[i+1] === 0 &&
+        // Check for 3-byte start code, but make sure it's not part of a 4-byte start code
+        const is3ByteStart = !is4ByteStart && i > 0 &&
+                             buffer[i] === 0 && buffer[i+1] === 0 &&
                              buffer[i+2] === 1;
 
         if (is4ByteStart || is3ByteStart) {
-            if (start > 0) {
+            if (firstNalFound) {
+                // Save the previous NAL unit
                 nalUnits.push(buffer.slice(start, i));
             }
             start = i;
+            firstNalFound = true;
+            // Skip the start code bytes to avoid re-detecting them
+            i += is4ByteStart ? 3 : 2;
         }
     }
 
     // Add the last NAL unit
-    if (start > 0 && start < buffer.length) {
+    if (firstNalFound && start < buffer.length) {
         nalUnits.push(buffer.slice(start));
     }
 
     return nalUnits;
 }
 
+// Get NAL unit type
+function getNALType(nalUnit) {
+    // NAL type is in the first byte after start code
+    const startCodeLen = (nalUnit[0] === 0 && nalUnit[1] === 0 && nalUnit[2] === 0 && nalUnit[3] === 1) ? 4 : 3;
+    return nalUnit[startCodeLen] & 0x1f;
+}
+
+// Group NAL units into Access Units (frames)
+function groupIntoAccessUnits(nalUnits) {
+    const accessUnits = [];
+    let currentAU = [];
+    let spsData = null;
+    let ppsData = null;
+
+    for (const nal of nalUnits) {
+        const nalType = getNALType(nal);
+
+        // Save SPS and PPS for later use
+        if (nalType === 7) {  // SPS
+            spsData = nal;
+            continue;
+        }
+        if (nalType === 8) {  // PPS
+            ppsData = nal;
+            continue;
+        }
+
+        // AUD (type 9) marks the start of a new Access Unit
+        if (nalType === 9 && currentAU.length > 0) {
+            // Save the previous AU
+            accessUnits.push(Buffer.concat(currentAU));
+            currentAU = [];
+        }
+
+        // Add NAL to current AU
+        currentAU.push(nal);
+
+        // If this is a slice (IDR or non-IDR), the next AUD will start a new AU
+        // Slice types: 1 (non-IDR), 5 (IDR)
+        if (nalType === 5 || nalType === 1) {
+            // For the first IDR frame, prepend SPS and PPS
+            if (nalType === 5 && spsData && ppsData && accessUnits.length === 0) {
+                currentAU.unshift(ppsData, spsData);
+            }
+        }
+    }
+
+    // Add the last AU
+    if (currentAU.length > 0) {
+        accessUnits.push(Buffer.concat(currentAU));
+    }
+
+    return accessUnits;
+}
+
 // Load H.264 test video file
 let testVideoData = null;
-let nalUnits = [];
+let accessUnits = [];
 
 try {
     testVideoData = fs.readFileSync(TEST_VIDEO_PATH);
-    nalUnits = parseH264NALUnits(testVideoData);
+    const nalUnits = parseH264NALUnits(testVideoData);
+    accessUnits = groupIntoAccessUnits(nalUnits);
     console.log(`Loaded test video: ${TEST_VIDEO_PATH}`);
     console.log(`NAL units count: ${nalUnits.length}`);
+    console.log(`Access Units (frames) count: ${accessUnits.length}`);
     console.log(`File size: ${(testVideoData.length / 1024).toFixed(2)} KB`);
+
+    // Log first few AU sizes
+    console.log('\nFirst 5 Access Units:');
+    for (let i = 0; i < Math.min(5, accessUnits.length); i++) {
+        console.log(`  AU ${i}: ${accessUnits[i].length} bytes`);
+    }
 } catch (error) {
     console.error(`Failed to load test video file: ${error.message}`);
 }
@@ -79,19 +150,19 @@ wss.on('connection', (ws, req) => {
     };
     connections.set(ws, connectionInfo);
 
-    // Start sending data (H.264 NAL units)
+    // Start sending data (H.264 Access Units / frames)
     // Create a timer to send data every NAL_SEND_INTERVAL milliseconds
     const dataInterval = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
-            if (nalUnits.length > 0) {
-                // Send H.264 NAL units (loop playback)
-                const nalIndex = connectionInfo.messagesSent % nalUnits.length;
-                const dataToSend = nalUnits[nalIndex];
+            if (accessUnits.length > 0) {
+                // Send H.264 Access Units (loop playback)
+                const auIndex = connectionInfo.messagesSent % accessUnits.length;
+                const dataToSend = accessUnits[auIndex];
                 const dataSize = dataToSend.length;
 
                 // Log every 25 frames (1 second at 25fps)
-                if (nalIndex % 25 === 0) {
-                    console.log(`[Connection #${clientId}] Sending NAL unit ${nalIndex}/${nalUnits.length} (${dataSize} bytes)`);
+                if (auIndex % 25 === 0) {
+                    console.log(`[Connection #${clientId}] Sending Access Unit (frame) ${auIndex}/${accessUnits.length} (${dataSize} bytes)`);
                 }
 
                 try {

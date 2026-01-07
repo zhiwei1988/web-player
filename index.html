@@ -101,28 +101,6 @@
             color: #007bff;
             font-weight: bold;
         }
-        .console-wrapper {
-            margin-top: 20px;
-            background: white;
-            padding: 15px;
-            border-radius: 6px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .console-wrapper h3 {
-            margin-top: 0;
-            color: #333;
-        }
-        #console {
-            font-family: 'Courier New', monospace;
-            background: #1e1e1e;
-            color: #00ff00;
-            padding: 15px;
-            height: 250px;
-            overflow-y: auto;
-            border-radius: 4px;
-            font-size: 13px;
-            line-height: 1.6;
-        }
         .info {
             background: #d1ecf1;
             border: 1px solid #bee5eb;
@@ -145,7 +123,7 @@
 
     <div class="controls">
         <label for="wsUrl" style="font-weight: bold; margin-right: 10px;">WebSocket地址：</label>
-        <input type="text" id="wsUrl" placeholder="ws://localhost:8080" value="ws://localhost:8080" style="width: 300px;">
+        <input type="text" id="wsUrl" placeholder="ws://192.168.50.101:8080" value="ws://192.168.50.101:8080" style="width: 300px;">
         <button onclick="connect()">🔌 连接</button>
         <button onclick="disconnect()">❌ 断开</button>
     </div>
@@ -183,10 +161,6 @@
         <div>🔧 解码器状态: <span id="decoderStatus">未初始化</span></div>
     </div>
 
-    <div class="console-wrapper">
-        <h3>🖥️ 控制台日志（最近20条）</h3>
-        <div id="console"></div>
-    </div>
 
     <script type="module">
         import { WorkerBridge } from './dist/js/js/decoder/WorkerBridge.js';
@@ -219,9 +193,6 @@
 
                 decoderBridge.onError((error) => {
                     console.error('Decoder error:', error);
-                    if (window.log) {
-                        window.log(`解码器错误: ${error}`, 'error');
-                    }
                     document.getElementById('decoderStatus').textContent = `错误: ${error}`;
                 });
 
@@ -231,16 +202,10 @@
                 });
 
                 document.getElementById('decoderStatus').textContent = '已初始化';
-                if (window.log) {
-                    window.log('解码器初始化成功', 'success');
-                }
 
                 window.decoderBridge = decoderBridge;
             } catch (error) {
                 console.error('Failed to initialize decoder:', error);
-                if (window.log) {
-                    window.log(`解码器初始化失败: ${error}`, 'error');
-                }
                 document.getElementById('decoderStatus').textContent = `初始化失败: ${error.message}`;
             }
         }
@@ -449,17 +414,7 @@
             lastUpdateTime: null,
             lastBytesReceived: 0
         };
-        let logs = [];
         let statsInterval = null;
-
-        function log(message, type = 'info') {
-            const timestamp = new Date().toLocaleTimeString();
-            const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
-            logs.push(`${prefix} [${timestamp}] ${message}`);
-            if (logs.length > 20) logs.shift();
-            document.getElementById('console').innerHTML = logs.join('<br>');
-            console.log(message);
-        }
 
         function updateStatus(state, message) {
             const statusEl = document.getElementById('status');
@@ -498,23 +453,23 @@
                                     await window.decoderBridge.decode(uint8Array, packet.timestamp);
                                 }
                             } else {
-                                log(`🔄 消费数据包: ${dataSize} 字节 (队列延迟: ${age}ms, 解码器未初始化)`, 'info');
+                                console.log(`🔄 消费数据包: ${dataSize} 字节 (队列延迟: ${age}ms, 解码器未初始化)`);
                             }
                         } catch (error) {
-                            log(`解码错误: ${error.message}`, 'error');
+                            console.error(`解码错误: ${error.message}`);
                         }
                     }
                 }
             }, 33);  // 约30fps
 
-            log('数据消费者已启动 (每33ms消费1个数据包)', 'success');
+            console.log('数据消费者已启动 (每33ms消费1个数据包)');
         }
 
         function stopConsumer() {
             if (consumerInterval) {
                 clearInterval(consumerInterval);
                 consumerInterval = null;
-                log('数据消费者已停止', 'info');
+                console.log('数据消费者已停止');
             }
         }
 
@@ -561,7 +516,7 @@
 
                 // 如果有溢出，警告用户
                 if (bufferStats.totalOverflows > 0 && bufferStats.totalOverflows % 10 === 0) {
-                    log(`⚠️ 缓冲区溢出警告: 已丢弃 ${bufferStats.totalOverflows} 个数据包`, 'error');
+                    console.error(`⚠️ 缓冲区溢出警告: 已丢弃 ${bufferStats.totalOverflows} 个数据包`);
                 }
             } else {
                 // 重置缓冲区统计信息
@@ -581,12 +536,12 @@
             const url = document.getElementById('wsUrl').value || 'ws://localhost:8080';
 
             if (ws && ws.readyState === WebSocket.OPEN) {
-                log('已存在连接，请先断开', 'error');
+                console.error('已存在连接，请先断开');
                 return;
             }
 
             updateStatus('connecting', '正在连接...');
-            log(`正在连接到 ${url}`);
+            console.log(`正在连接到 ${url}`);
 
             try {
                 ws = new WebSocket(url);
@@ -602,13 +557,13 @@
                         maxSize: 100,              // 最多缓冲100个数据包
                         maxBytes: 10 * 1024 * 1024 // 最多缓冲10MB
                     });
-                    log('数据缓冲队列已初始化 (最大: 100包/10MB)', 'success');
+                    console.log('数据缓冲队列已初始化 (最大: 100包/10MB)');
 
                     // 启动数据消费者（模拟解码器从缓冲队列读取数据）
                     startConsumer();
 
                     updateStatus('connected', `已连接到 ${url}`);
-                    log('WebSocket 连接成功！', 'success');
+                    console.log('WebSocket 连接成功！');
 
                     // Start stats update interval
                     if (statsInterval) clearInterval(statsInterval);
@@ -635,7 +590,7 @@
                             dataBuffer.enqueue(event.data);
                         }
 
-                        log(`接收二进制数据: ${dataSize} 字节 (类型: ${dataType}) → 缓冲队列`);
+                        console.log(`接收二进制数据: ${dataSize} 字节 (类型: ${dataType}) → 缓冲队列`);
                     } else if (event.data instanceof Blob) {
                         dataSize = event.data.size;
                         dataType = 'Blob';
@@ -654,7 +609,7 @@
                         stats.bytesReceived += dataSize;
 
                         const preview = event.data.length > 50 ? event.data.substring(0, 50) + '...' : event.data;
-                        log(`接收文本数据: ${preview}`);
+                        console.log(`接收文本数据: ${preview}`);
 
                         // 文本数据不放入缓冲队列，直接处理
                         try {
@@ -663,7 +618,7 @@
                                 // 心跳消息，静默处理
                             } else if (jsonData.type === 'metadata') {
                                 // 元数据，可以显示在日志中
-                                log(`📊 元数据: 帧号 ${jsonData.frameInfo?.frameNumber || 'N/A'}`);
+                                console.log(`📊 元数据: 帧号 ${jsonData.frameInfo?.frameNumber || 'N/A'}`);
                             }
                         } catch (e) {
                             // 非 JSON 数据，忽略
@@ -674,12 +629,12 @@
                 };
 
                 ws.onerror = (error) => {
-                    log(`WebSocket 错误: ${error}`, 'error');
+                    console.error(`WebSocket 错误: ${error}`);
                     updateStatus('disconnected', '连接错误');
                 };
 
                 ws.onclose = (event) => {
-                    log(`WebSocket 关闭: code=${event.code}, reason=${event.reason || '无'}`, 'error');
+                    console.error(`WebSocket 关闭: code=${event.code}, reason=${event.reason || '无'}`);
                     updateStatus('disconnected', '连接已断开');
                     stats.connectionStartTime = null;
 
@@ -689,7 +644,7 @@
                     // 清理缓冲队列
                     if (dataBuffer) {
                         const bufferStats = dataBuffer.getStats();
-                        log(`清理缓冲队列: ${bufferStats.currentSize} 个数据包 (${(bufferStats.currentBytes / 1024).toFixed(2)} KB)`, 'info');
+                        console.log(`清理缓冲队列: ${bufferStats.currentSize} 个数据包 (${(bufferStats.currentBytes / 1024).toFixed(2)} KB)`);
                         dataBuffer.clear();
                         dataBuffer = null;
                     }
@@ -700,7 +655,7 @@
                     }
                 };
             } catch (error) {
-                log(`连接异常: ${error.message}`, 'error');
+                console.error(`连接异常: ${error.message}`);
                 updateStatus('disconnected', '连接失败');
             }
         }
@@ -709,7 +664,7 @@
             if (ws) {
                 ws.close();
                 ws = null;
-                log('主动断开连接', 'info');
+                console.log('主动断开连接');
 
                 // 停止消费者
                 stopConsumer();
@@ -717,7 +672,7 @@
                 // 清理缓冲队列
                 if (dataBuffer) {
                     const bufferStats = dataBuffer.getStats();
-                    log(`清理缓冲队列: ${bufferStats.currentSize} 个数据包 (${(bufferStats.currentBytes / 1024).toFixed(2)} KB)`, 'info');
+                    console.log(`清理缓冲队列: ${bufferStats.currentSize} 个数据包 (${(bufferStats.currentBytes / 1024).toFixed(2)} KB)`);
                     dataBuffer.clear();
                     dataBuffer = null;
                 }
@@ -740,7 +695,7 @@
         ctx.fillText('等待连接...', canvas.width / 2, canvas.height / 2);
 
         // Initial log
-        log('页面加载完成，准备就绪', 'success');
+        console.log('页面加载完成，准备就绪');
     </script>
 </body>
 </html>
