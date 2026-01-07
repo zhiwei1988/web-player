@@ -5,12 +5,10 @@ const path = require('path');
 // Configuration
 const PORT = 8080;
 const SEND_INTERVAL = 1000; // Send data every 1 second
-const CHUNK_SIZE = 1024 * 10; // 10KB per chunk
 
 // H.264 test video configuration
-const USE_TEST_VIDEO = true;  // Enable H.264 test video
 const TEST_VIDEO_PATH = './tests/fixtures/test_video.h264';
-const NAL_SEND_INTERVAL = 33;  // ~30fps (milliseconds)
+const NAL_SEND_INTERVAL = 40;  // ~25fps (milliseconds)
 
 // Parse H.264 NAL units from buffer
 function parseH264NALUnits(buffer) {
@@ -44,68 +42,31 @@ function parseH264NALUnits(buffer) {
 let testVideoData = null;
 let nalUnits = [];
 
-if (USE_TEST_VIDEO) {
-    try {
-        testVideoData = fs.readFileSync(TEST_VIDEO_PATH);
-        nalUnits = parseH264NALUnits(testVideoData);
-        console.log(`✅ 已加载测试视频: ${TEST_VIDEO_PATH}`);
-        console.log(`📦 NAL 单元数量: ${nalUnits.length}`);
-        console.log(`📊 文件大小: ${(testVideoData.length / 1024).toFixed(2)} KB`);
-    } catch (error) {
-        console.error(`❌ 无法加载测试视频文件: ${error.message}`);
-        console.log('⚠️  将回退到发送随机数据');
-    }
+try {
+    testVideoData = fs.readFileSync(TEST_VIDEO_PATH);
+    nalUnits = parseH264NALUnits(testVideoData);
+    console.log(`Loaded test video: ${TEST_VIDEO_PATH}`);
+    console.log(`NAL units count: ${nalUnits.length}`);
+    console.log(`File size: ${(testVideoData.length / 1024).toFixed(2)} KB`);
+} catch (error) {
+    console.error(`Failed to load test video file: ${error.message}`);
 }
 
 // Create WebSocket server
 const wss = new WebSocket.Server({ port: PORT });
 
-console.log('='.repeat(60));
-console.log('🚀 WebSocket 测试服务器启动成功');
-console.log('='.repeat(60));
-console.log(`📡 监听端口: ${PORT}`);
-console.log(`🔗 连接地址: ws://localhost:${PORT}`);
-console.log(`📊 数据发送间隔: ${SEND_INTERVAL}ms`);
-console.log(`📦 每次数据块大小: ${CHUNK_SIZE} bytes`);
-console.log('='.repeat(60));
-console.log('');
-
 // Track connections
 let connectionCount = 0;
 const connections = new Map();
-
-// Generate mock binary data
-function generateMockData(size) {
-    const buffer = new ArrayBuffer(size);
-    const view = new Uint8Array(buffer);
-
-    // Fill with random data to simulate encoded video/audio data
-    for (let i = 0; i < size; i++) {
-        view[i] = Math.floor(Math.random() * 256);
-    }
-
-    return buffer;
-}
-
-// Generate mock video frame header (simplified)
-function generateVideoFrameHeader() {
-    return {
-        type: 'video',
-        codec: 'h264',
-        timestamp: Date.now(),
-        frameNumber: Math.floor(Math.random() * 1000),
-        size: CHUNK_SIZE
-    };
-}
 
 // Handle new connections
 wss.on('connection', (ws, req) => {
     const clientId = ++connectionCount;
     const clientIp = req.socket.remoteAddress;
 
-    console.log(`✅ [连接 #${clientId}] 新客户端已连接`);
-    console.log(`   IP地址: ${clientIp}`);
-    console.log(`   当前连接数: ${wss.clients.size}`);
+    console.log(`[Connection #${clientId}] New client connected`);
+    console.log(`   IP Address: ${clientIp}`);
+    console.log(`   Current connections: ${wss.clients.size}`);
     console.log('');
 
     // Store connection info
@@ -118,92 +79,50 @@ wss.on('connection', (ws, req) => {
     };
     connections.set(ws, connectionInfo);
 
-    // Send welcome message
-    ws.send(JSON.stringify({
-        type: 'welcome',
-        message: '欢迎连接到WebSocket流媒体测试服务器',
-        serverId: 'test-server-001',
-        timestamp: Date.now()
-    }));
-
-    // Start sending data (H.264 NAL units or mock data)
+    // Start sending data (H.264 NAL units)
+    // Create a timer to send data every NAL_SEND_INTERVAL milliseconds
     const dataInterval = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
-            let dataToSend;
-            let dataSize;
-
-            if (USE_TEST_VIDEO && nalUnits.length > 0) {
+            if (nalUnits.length > 0) {
                 // Send H.264 NAL units (loop playback)
                 const nalIndex = connectionInfo.messagesSent % nalUnits.length;
-                dataToSend = nalUnits[nalIndex];
-                dataSize = dataToSend.length;
+                const dataToSend = nalUnits[nalIndex];
+                const dataSize = dataToSend.length;
 
-                // Log every 30 frames (1 second at 30fps)
-                if (nalIndex % 30 === 0) {
-                    console.log(`📤 [连接 #${clientId}] 发送 NAL 单元 ${nalIndex}/${nalUnits.length} (${dataSize} bytes)`);
+                // Log every 25 frames (1 second at 25fps)
+                if (nalIndex % 25 === 0) {
+                    console.log(`[Connection #${clientId}] Sending NAL unit ${nalIndex}/${nalUnits.length} (${dataSize} bytes)`);
                 }
-            } else {
-                // Fallback to random data
-                dataToSend = generateMockData(CHUNK_SIZE);
-                dataSize = CHUNK_SIZE;
 
-                if (connectionInfo.messagesSent % 5 === 0) {
-                    const mbSent = (connectionInfo.bytesSent / 1024 / 1024).toFixed(2);
-                    console.log(`📤 [连接 #${clientId}] 已发送 ${connectionInfo.messagesSent} 条消息，共 ${mbSent} MB`);
+                try {
+                    ws.send(dataToSend);
+                    connectionInfo.messagesSent++;
+                    connectionInfo.bytesSent += dataSize;
+                } catch (error) {
+                    console.error(`[Connection #${clientId}] Failed to send data:`, error.message);
                 }
-            }
-
-            try {
-                ws.send(dataToSend);
-                connectionInfo.messagesSent++;
-                connectionInfo.bytesSent += dataSize;
-
-                // Occasionally send metadata as text
-                if (connectionInfo.messagesSent % 10 === 0) {
-                    const frameHeader = USE_TEST_VIDEO ?
-                        { type: 'video', codec: 'h264', timestamp: Date.now(), frameNumber: connectionInfo.messagesSent, size: dataSize } :
-                        generateVideoFrameHeader();
-
-                    ws.send(JSON.stringify({
-                        type: 'metadata',
-                        frameInfo: frameHeader,
-                        stats: {
-                            totalMessagesSent: connectionInfo.messagesSent,
-                            totalBytesSent: connectionInfo.bytesSent,
-                            uptime: Math.floor((Date.now() - connectionInfo.connectedAt.getTime()) / 1000)
-                        }
-                    }));
-                }
-            } catch (error) {
-                console.error(`❌ [连接 #${clientId}] 发送数据失败:`, error.message);
             }
         }
-    }, USE_TEST_VIDEO ? NAL_SEND_INTERVAL : SEND_INTERVAL);
+    }, NAL_SEND_INTERVAL);
 
     // Handle incoming messages
     ws.on('message', (message) => {
         try {
             const data = message.toString();
-            console.log(`📨 [连接 #${clientId}] 收到消息: ${data}`);
-
-            // Echo back with confirmation
-            ws.send(JSON.stringify({
-                type: 'echo',
-                originalMessage: data,
-                receivedAt: Date.now()
-            }));
+            console.log(`[Connection #${clientId}] Received message: ${data}`);
         } catch (error) {
-            console.error(`❌ [连接 #${clientId}] 处理消息失败:`, error.message);
+            console.error(`[Connection #${clientId}] Failed to process message:`, error.message);
         }
     });
 
     // Handle errors
     ws.on('error', (error) => {
-        console.error(`❌ [连接 #${clientId}] WebSocket错误:`, error.message);
+        console.error(`[Connection #${clientId}] WebSocket error:`, error.message);
     });
 
     // Handle disconnection
     ws.on('close', (code, reason) => {
+        // Clear the data interval timer
         clearInterval(dataInterval);
 
         const info = connections.get(ws);
@@ -212,48 +131,36 @@ wss.on('connection', (ws, req) => {
             const mbSent = (info.bytesSent / 1024 / 1024).toFixed(2);
 
             console.log('');
-            console.log(`👋 [连接 #${clientId}] 客户端已断开`);
-            console.log(`   断开代码: ${code}`);
-            console.log(`   断开原因: ${reason || '无'}`);
-            console.log(`   连接时长: ${duration} 秒`);
-            console.log(`   发送消息数: ${info.messagesSent} 条`);
-            console.log(`   发送数据量: ${mbSent} MB`);
-            console.log(`   剩余连接数: ${wss.clients.size}`);
+            console.log(`[Connection #${clientId}] Client disconnected`);
+            console.log(`   Close code: ${code}`);
+            console.log(`   Close reason: ${reason || 'none'}`);
+            console.log(`   Connection duration: ${duration} seconds`);
+            console.log(`   Messages sent: ${info.messagesSent}`);
+            console.log(`   Data sent: ${mbSent} MB`);
+            console.log(`   Remaining connections: ${wss.clients.size}`);
             console.log('');
 
             connections.delete(ws);
         }
     });
-
-    // Send heartbeat every 30 seconds
-    const heartbeatInterval = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-                type: 'heartbeat',
-                timestamp: Date.now()
-            }));
-        } else {
-            clearInterval(heartbeatInterval);
-        }
-    }, 30000);
 });
 
 // Handle server errors
 wss.on('error', (error) => {
-    console.error('❌ WebSocket服务器错误:', error);
+    console.error('WebSocket server error:', error);
 });
 
 // Graceful shutdown
 process.on('SIGINT', () => {
     console.log('');
-    console.log('📴 正在关闭服务器...');
+    console.log('Shutting down server...');
 
     wss.clients.forEach((ws) => {
-        ws.close(1000, '服务器正在关闭');
+        ws.close(1000, 'Server is shutting down');
     });
 
     wss.close(() => {
-        console.log('✅ 服务器已关闭');
+        console.log('Server closed');
         process.exit(0);
     });
 });
@@ -262,9 +169,9 @@ process.on('SIGINT', () => {
 setInterval(() => {
     if (wss.clients.size > 0) {
         console.log('');
-        console.log('📊 服务器状态:');
-        console.log(`   活动连接数: ${wss.clients.size}`);
-        console.log(`   总连接次数: ${connectionCount}`);
+        console.log('Server status:');
+        console.log(`   Active connections: ${wss.clients.size}`);
+        console.log(`   Total connections: ${connectionCount}`);
 
         let totalBytesSent = 0;
         let totalMessagesSent = 0;
@@ -275,7 +182,7 @@ setInterval(() => {
 
         if (totalBytesSent > 0) {
             const mbSent = (totalBytesSent / 1024 / 1024).toFixed(2);
-            console.log(`   累计发送: ${totalMessagesSent} 条消息，${mbSent} MB`);
+            console.log(`   Total sent: ${totalMessagesSent} messages, ${mbSent} MB`);
         }
         console.log('');
     }
