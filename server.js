@@ -7,6 +7,7 @@ const PORT = 8080;
 const SEND_INTERVAL = 1000; // Send data every 1 second
 
 // H.264 test video configuration
+// const TEST_VIDEO_PATH = './tests/fixtures/AVC_Stream.h264';
 const TEST_VIDEO_PATH = './tests/fixtures/test_video.h264';
 const NAL_SEND_INTERVAL = 40;  // ~25fps (milliseconds)
 
@@ -53,12 +54,20 @@ function getNALType(nalUnit) {
     return nalUnit[startCodeLen] & 0x1f;
 }
 
+// Check if NAL unit is a VCL (Video Coding Layer) slice
+function isVCLNAL(nalType) {
+    // VCL NAL unit types: 1-5 are slice types
+    // 1: non-IDR slice, 5: IDR slice
+    return nalType >= 1 && nalType <= 5;
+}
+
 // Group NAL units into Access Units (frames)
 function groupIntoAccessUnits(nalUnits) {
     const accessUnits = [];
     let currentAU = [];
     let spsData = null;
     let ppsData = null;
+    let hasVCLInCurrentAU = false;
 
     for (const nal of nalUnits) {
         const nalType = getNALType(nal);
@@ -74,23 +83,37 @@ function groupIntoAccessUnits(nalUnits) {
         }
 
         // AUD (type 9) marks the start of a new Access Unit
-        if (nalType === 9 && currentAU.length > 0) {
-            // Save the previous AU
-            accessUnits.push(Buffer.concat(currentAU));
-            currentAU = [];
+        if (nalType === 9) {
+            if (currentAU.length > 0) {
+                // Save the previous AU
+                accessUnits.push(Buffer.concat(currentAU));
+                currentAU = [];
+                hasVCLInCurrentAU = false;
+            }
+            // Add AUD to current AU
+            currentAU.push(nal);
+            continue;
+        }
+
+        // Check if this VCL NAL starts a new Access Unit (when no AUD present)
+        // A new VCL NAL starts a new AU if we already have a VCL NAL in current AU
+        if (isVCLNAL(nalType)) {
+            if (hasVCLInCurrentAU) {
+                // Save the previous AU and start a new one
+                accessUnits.push(Buffer.concat(currentAU));
+                currentAU = [];
+                hasVCLInCurrentAU = false;
+            }
+            hasVCLInCurrentAU = true;
+
+            // For the first IDR frame, prepend SPS and PPS
+            if (nalType === 5 && spsData && ppsData && accessUnits.length === 0) {
+                currentAU.push(spsData, ppsData);
+            }
         }
 
         // Add NAL to current AU
         currentAU.push(nal);
-
-        // If this is a slice (IDR or non-IDR), the next AUD will start a new AU
-        // Slice types: 1 (non-IDR), 5 (IDR)
-        if (nalType === 5 || nalType === 1) {
-            // For the first IDR frame, prepend SPS and PPS
-            if (nalType === 5 && spsData && ppsData && accessUnits.length === 0) {
-                currentAU.unshift(ppsData, spsData);
-            }
-        }
     }
 
     // Add the last AU
