@@ -104,7 +104,9 @@ emconfigure ./configure \
     --disable-protocols \
     \
     --enable-decoder=h264 \
+    --enable-decoder=hevc \
     --enable-parser=h264 \
+    --enable-parser=hevc \
     --enable-protocol=file \
     \
     --extra-cflags="${CFLAGS}" \

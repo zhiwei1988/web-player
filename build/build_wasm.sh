@@ -42,9 +42,10 @@ CFLAGS=(
 
 LDFLAGS=(
     -L"${FFMPEG_DIR}/lib"
-    -lavcodec
     -lavformat
+    -lavcodec
     -lavutil
+    -pthread
 )
 
 EMFLAGS=(

@@ -31,12 +31,22 @@ async function initDecoder() {
             document.getElementById('decoderStatus').textContent = `错误: ${error}`;
         });
 
+        // 从 URL 参数获取编解码器类型
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlCodec = urlParams.get('codec');
+        let codecType = 'h264';  // 默认 h264
+
+        if (urlCodec && (urlCodec === 'h264' || urlCodec === 'h265' || urlCodec === 'hevc')) {
+            codecType = urlCodec === 'hevc' ? 'h265' : urlCodec;
+        }
+
         await decoderBridge.init({
-            codecType: 'h264',
+            codecType: codecType,
             wasmPath: '/dist/decoder.js'
         });
 
-        document.getElementById('decoderStatus').textContent = '已初始化';
+        const codecName = codecType === 'h265' ? 'H.265/HEVC' : 'H.264/AVC';
+        document.getElementById('decoderStatus').textContent = `已初始化 (${codecName})`;
 
         window.decoderBridge = decoderBridge;
     } catch (error) {
