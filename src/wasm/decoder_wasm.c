@@ -19,6 +19,8 @@
 static AVCodecContext* g_video_ctx = NULL;
 static AVFrame* g_video_frame = NULL;
 static AVPacket* g_video_packet = NULL;
+static const AVCodec* g_video_codec = NULL;
+static AVCodecParserContext* g_video_parser = NULL;
 static int g_initialized = 0;
 
 // ===========================
@@ -57,6 +59,11 @@ static void cleanup_video_decoder(void) {
         avcodec_free_context(&g_video_ctx);
         g_video_ctx = NULL;
     }
+    if (g_video_parser) {
+        av_parser_close(g_video_parser);
+        g_video_parser = NULL;
+    }
+    g_video_codec = NULL;
 }
 
 // ===========================
@@ -71,21 +78,21 @@ int decoder_init_video(CodecType codec_type) {
     }
 
     // Find decoder
-    const AVCodec* codec = find_decoder(codec_type);
-    if (!codec) {
+    g_video_codec = find_decoder(codec_type);
+    if (!g_video_codec) {
         fprintf(stderr, "[decoder] Decoder not found: %d\n", codec_type);
         return -1;
     }
 
     // Allocate decoder context
-    g_video_ctx = avcodec_alloc_context3(codec);
+    g_video_ctx = avcodec_alloc_context3(g_video_codec);
     if (!g_video_ctx) {
         fprintf(stderr, "[decoder] Memory allocation failed: AVCodecContext\n");
         return -2;
     }
 
     // Open decoder
-    if (avcodec_open2(g_video_ctx, codec, NULL) < 0) {
+    if (avcodec_open2(g_video_ctx, g_video_codec, NULL) < 0) {
         fprintf(stderr, "[decoder] Failed to open decoder\n");
         avcodec_free_context(&g_video_ctx);
         return -3;
@@ -101,8 +108,16 @@ int decoder_init_video(CodecType codec_type) {
         return -4;
     }
 
+    g_video_parser = av_parser_init(g_video_codec->id);
+    if (!g_video_parser) {
+        fprintf(stderr, "[decoder] Failed to initialize parser\n");
+        cleanup_video_decoder();
+        return -5;
+    }
+
     g_initialized = 1;
-    printf("[decoder] H.264 decoder initialized successfully\n");
+    printf("[decoder] %s decoder initialized successfully\n",
+           codec_type == CODEC_H264 ? "H.264" : "H.265");
 
     return 0;
 }
@@ -113,30 +128,83 @@ DecodeStatus decoder_send_video_packet(const uint8_t* data, int size, int64_t pt
         return DECODE_ERROR;
     }
 
-    // Set packet data
-    g_video_packet->data = (uint8_t*)data;
-    g_video_packet->size = size;
-    g_video_packet->pts = pts;
-    g_video_packet->dts = pts;
+    if (!g_video_parser) {
+        // Fallback: send raw packet directly
+        g_video_packet->data = (uint8_t*)data;
+        g_video_packet->size = size;
+        g_video_packet->pts = pts;
+        g_video_packet->dts = pts;
 
-    // Send packet to decoder
-    int ret = avcodec_send_packet(g_video_ctx, g_video_packet);
+        int ret = avcodec_send_packet(g_video_ctx, g_video_packet);
+        av_packet_unref(g_video_packet);
 
-    // Unref packet (don't free data, as it's passed from external)
-    av_packet_unref(g_video_packet);
-
-    if (ret < 0) {
-        if (ret == AVERROR(EAGAIN)) {
-            return DECODE_NEED_MORE_DATA;
+        if (ret < 0) {
+            if (ret == AVERROR(EAGAIN)) {
+                return DECODE_NEED_MORE_DATA;
+            }
+            if (ret == AVERROR_EOF) {
+                return DECODE_EOF;
+            }
+            fprintf(stderr, "[decoder] avcodec_send_packet failed: %d\n", ret);
+            return DECODE_ERROR;
         }
-        if (ret == AVERROR_EOF) {
-            return DECODE_EOF;
-        }
-        fprintf(stderr, "[decoder] avcodec_send_packet failed: %d\n", ret);
-        return DECODE_ERROR;
+
+        return DECODE_OK;
     }
 
-    return DECODE_OK;
+    const uint8_t* input_data = data;
+    int input_size = size;
+    int has_packet = 0;
+
+    while (input_size > 0) {
+        uint8_t* out_data = NULL;
+        int out_size = 0;
+
+        int consumed = av_parser_parse2(
+            g_video_parser,
+            g_video_ctx,
+            &out_data,
+            &out_size,
+            input_data,
+            input_size,
+            pts,
+            pts,
+            0
+        );
+
+        if (consumed < 0) {
+            fprintf(stderr, "[decoder] av_parser_parse2 failed: %d\n", consumed);
+            return DECODE_ERROR;
+        }
+
+        input_data += consumed;
+        input_size -= consumed;
+
+        if (out_size > 0) {
+            has_packet = 1;
+
+            g_video_packet->data = out_data;
+            g_video_packet->size = out_size;
+            g_video_packet->pts = pts;
+            g_video_packet->dts = pts;
+
+            int ret = avcodec_send_packet(g_video_ctx, g_video_packet);
+            av_packet_unref(g_video_packet);
+
+            if (ret < 0) {
+                if (ret == AVERROR(EAGAIN)) {
+                    return DECODE_NEED_MORE_DATA;
+                }
+                if (ret == AVERROR_EOF) {
+                    return DECODE_EOF;
+                }
+                fprintf(stderr, "[decoder] avcodec_send_packet failed: %d\n", ret);
+                return DECODE_ERROR;
+            }
+        }
+    }
+
+    return has_packet ? DECODE_OK : DECODE_NEED_MORE_DATA;
 }
 
 DecodeStatus decoder_receive_video_frame(VideoFrameInfo* frame_info) {

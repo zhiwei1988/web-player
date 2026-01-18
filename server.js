@@ -6,13 +6,21 @@ const path = require('path');
 const PORT = 8080;
 const SEND_INTERVAL = 1000; // Send data every 1 second
 
-// H.264 test video configuration
-// const TEST_VIDEO_PATH = './tests/fixtures/AVC_Stream.h264';
-const TEST_VIDEO_PATH = './tests/fixtures/test_video.h264';
+// Codec type from environment variable (default: h264)
+const CODEC_TYPE = process.env.CODEC_TYPE || 'h264';
+const IS_H265 = CODEC_TYPE === 'h265' || CODEC_TYPE === 'hevc';
+
+// Test video path based on codec type
+const TEST_VIDEO_PATH = IS_H265
+    ? './tests/fixtures/TSU_640x360.h265'
+    : './tests/fixtures/test_video.h264';
 const NAL_SEND_INTERVAL = 40;  // ~25fps (milliseconds)
 
+console.log(`Codec type: ${CODEC_TYPE} (${IS_H265 ? 'H.265/HEVC' : 'H.264/AVC'})`);
+console.log(`Video file: ${TEST_VIDEO_PATH}`);
+
 // Parse H.264 NAL units from buffer
-function parseH264NALUnits(buffer) {
+function parseNALUnits(buffer) {
     const nalUnits = [];
     let start = 0;
     let firstNalFound = false;
@@ -47,100 +55,22 @@ function parseH264NALUnits(buffer) {
     return nalUnits;
 }
 
-// Get NAL unit type
-function getNALType(nalUnit) {
-    // NAL type is in the first byte after start code
-    const startCodeLen = (nalUnit[0] === 0 && nalUnit[1] === 0 && nalUnit[2] === 0 && nalUnit[3] === 1) ? 4 : 3;
-    return nalUnit[startCodeLen] & 0x1f;
-}
 
-// Check if NAL unit is a VCL (Video Coding Layer) slice
-function isVCLNAL(nalType) {
-    // VCL NAL unit types: 1-5 are slice types
-    // 1: non-IDR slice, 5: IDR slice
-    return nalType >= 1 && nalType <= 5;
-}
-
-// Group NAL units into Access Units (frames)
-function groupIntoAccessUnits(nalUnits) {
-    const accessUnits = [];
-    let currentAU = [];
-    let spsData = null;
-    let ppsData = null;
-    let hasVCLInCurrentAU = false;
-
-    for (const nal of nalUnits) {
-        const nalType = getNALType(nal);
-
-        // Save SPS and PPS for later use
-        if (nalType === 7) {  // SPS
-            spsData = nal;
-            continue;
-        }
-        if (nalType === 8) {  // PPS
-            ppsData = nal;
-            continue;
-        }
-
-        // AUD (type 9) marks the start of a new Access Unit
-        if (nalType === 9) {
-            if (currentAU.length > 0) {
-                // Save the previous AU
-                accessUnits.push(Buffer.concat(currentAU));
-                currentAU = [];
-                hasVCLInCurrentAU = false;
-            }
-            // Add AUD to current AU
-            currentAU.push(nal);
-            continue;
-        }
-
-        // Check if this VCL NAL starts a new Access Unit (when no AUD present)
-        // A new VCL NAL starts a new AU if we already have a VCL NAL in current AU
-        if (isVCLNAL(nalType)) {
-            if (hasVCLInCurrentAU) {
-                // Save the previous AU and start a new one
-                accessUnits.push(Buffer.concat(currentAU));
-                currentAU = [];
-                hasVCLInCurrentAU = false;
-            }
-            hasVCLInCurrentAU = true;
-
-            // For the first IDR frame, prepend SPS and PPS
-            if (nalType === 5 && spsData && ppsData && accessUnits.length === 0) {
-                currentAU.push(spsData, ppsData);
-            }
-        }
-
-        // Add NAL to current AU
-        currentAU.push(nal);
-    }
-
-    // Add the last AU
-    if (currentAU.length > 0) {
-        accessUnits.push(Buffer.concat(currentAU));
-    }
-
-    return accessUnits;
-}
-
-// Load H.264 test video file
+// Load test video file
 let testVideoData = null;
-let accessUnits = [];
+let nalUnits = [];
 
 try {
     testVideoData = fs.readFileSync(TEST_VIDEO_PATH);
-    const nalUnits = parseH264NALUnits(testVideoData);
-    accessUnits = groupIntoAccessUnits(nalUnits);
-    console.log(`Loaded test video: ${TEST_VIDEO_PATH}`);
+    nalUnits = parseNALUnits(testVideoData);  // NAL parsing is same for H.264/H.265
+    console.log(`Loaded ${IS_H265 ? 'H.265' : 'H.264'} test video: ${TEST_VIDEO_PATH}`);
     console.log(`NAL units count: ${nalUnits.length}`);
-    console.log(`Access Units (frames) count: ${accessUnits.length}`);
     console.log(`File size: ${(testVideoData.length / 1024).toFixed(2)} KB`);
 
-    // Log first few AU sizes
-    console.log('\nFirst 5 Access Units:');
-    for (let i = 0; i < Math.min(5, accessUnits.length); i++) {
-        console.log(`  AU ${i}: ${accessUnits[i].length} bytes`);
+    // Log first few NAL sizes
+    console.log('\nFirst 5 NAL units:');
+    for (let i = 0; i < Math.min(5, nalUnits.length); i++) {
+        console.log(`  NAL ${i}: ${nalUnits[i].length} bytes`);
     }
 } catch (error) {
     console.error(`Failed to load test video file: ${error.message}`);
@@ -173,19 +103,19 @@ wss.on('connection', (ws, req) => {
     };
     connections.set(ws, connectionInfo);
 
-    // Start sending data (H.264 Access Units / frames)
+    // Start sending data (NAL units)
     // Create a timer to send data every NAL_SEND_INTERVAL milliseconds
     const dataInterval = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
-            if (accessUnits.length > 0) {
-                // Send H.264 Access Units (loop playback)
-                const auIndex = connectionInfo.messagesSent % accessUnits.length;
-                const dataToSend = accessUnits[auIndex];
+            if (nalUnits.length > 0) {
+                // Send NAL units (loop playback)
+                const nalIndex = connectionInfo.messagesSent % nalUnits.length;
+                const dataToSend = nalUnits[nalIndex];
                 const dataSize = dataToSend.length;
 
-                // Log every 25 frames (1 second at 25fps)
-                if (auIndex % 25 === 0) {
-                    console.log(`[Connection #${clientId}] Sending Access Unit (frame) ${auIndex}/${accessUnits.length} (${dataSize} bytes)`);
+                // Log every 25 NAL units
+                if (nalIndex % 25 === 0) {
+                    console.log(`[Connection #${clientId}] Sending NAL unit ${nalIndex}/${nalUnits.length} (${dataSize} bytes)`);
                 }
 
                 try {
