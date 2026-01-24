@@ -24,8 +24,8 @@ Emscripten SDK path: `/home/zhiwei/OpenSource/emsdk`
 
 Server (Linux 192.168.50.101):
 ```bash
-npm start                    # WebSocket server on port 8080 (default: H.264)
-CODEC_TYPE=h265 npm start    # WebSocket server with H.265
+./bin/video_server           # WebSocket server on port 8080 (default: H.264)
+CODEC_TYPE=h265 ./bin/video_server  # WebSocket server with H.265
 python3 -m http.server 8888  # HTTP server for static files
 ```
 
@@ -39,7 +39,7 @@ Client browser access:
 ```
 Browser                           Server
 ┌─────────────────────────┐      ┌─────────────────┐
-│ index.html              │      │ server.js       │
+│ index.html              │      │ video_server    │
 │  └─ app.js (WebSocket)  │ ◄──► │  NAL parser     │
 │  └─ decoder-init.js     │      │  Access Unit    │
 │      └─ WorkerBridge    │      │  grouping       │
@@ -55,7 +55,7 @@ Browser                           Server
 - `src/js/decoder/WorkerBridge.ts` - Main thread ↔ Web Worker communication
 - `src/worker/decode-worker.ts` - Runs decoder in separate thread
 - `src/js/decoder/types.ts` - TypeScript type definitions
-- `server.js` - Parses H.264/H.265 bitstream into Access Units, sends via WebSocket
+- `src/server/` - C++ WebSocket server, parses H.264/H.265 bitstream into NAL units
 
 **Data flow:**
 1. Server reads raw H.264/H.265 file, parses NAL units, groups into Access Units
@@ -84,7 +84,7 @@ C functions exported (see `src/wasm/decoder_wasm.h`):
 
 我的服务端是部署在 Linux 服务器上的，服务器 ip 192.168.50.101
 
-我通过 npm start 启动服务端，通过环境变量 CODEC_TYPE 可以指定服务端发送的视频编码格式，例如：CODEC_TYPE=h265 npm start，这里会起一个 websocket 服务，在 8080 端口上
+我通过 ./bin/video_server 启动服务端，通过环境变量 CODEC_TYPE 可以指定服务端发送的视频编码格式，例如：CODEC_TYPE=h265 ./bin/video_server，这里会起一个 websocket 服务，在 8080 端口上
 
 我同时通过 python 起了一个 http 服务，python3 -m http.server 8888
 

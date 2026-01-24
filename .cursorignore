@@ -1,6 +1,7 @@
 third_party/
 node_modules/
 dist/
+build/
 ffmpeg-build/
 .emscripten_cache/
 .emscripten_ports/

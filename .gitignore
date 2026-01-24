@@ -4,6 +4,7 @@ node_modules
 dist/
 ffmpeg-build/
 third_party/ffmpeg-*/
+build/
 
 # 临时文件
 *.o

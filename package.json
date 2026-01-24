@@ -2,13 +2,11 @@
   "name": "websocket-media-player",
   "version": "1.0.0",
   "description": "WebSocket流媒体播放器 - 快速验证Demo",
-  "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "npm run build:ts && node server.js",
+    "start": "./bin/video_server",
     "build:ts": "tsc",
-    "build:ffmpeg": "bash build/build_ffmpeg.sh",
-    "build:wasm": "bash build/build_wasm.sh",
+    "build:ffmpeg": "bash scripts/build_ffmpeg.sh",
+    "build:wasm": "bash scripts/build_wasm.sh",
     "build:decoder": "npm run build:ffmpeg && npm run build:wasm",
     "build:all": "npm run build:decoder && npm run build:ts",
     "clean": "rm -rf dist/js/ ffmpeg-build/ third_party/ffmpeg-*",
@@ -22,9 +20,6 @@
   ],
   "author": "",
   "license": "MIT",
-  "dependencies": {
-    "ws": "^8.14.2"
-  },
   "devDependencies": {
     "typescript": "^5.0.0",
     "@types/emscripten": "^1.39.6"
