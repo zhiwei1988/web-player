@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Media Player - Connection Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 900px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f8f9fa;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .status {
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 16px;
+        }
+        .connecting {
+            background: #fff3cd;
+            color: #856404;
+            border: 2px solid #ffc107;
+        }
+        .connected {
+            background: #d4edda;
+            color: #155724;
+            border: 2px solid #28a745;
+        }
+        .disconnected {
+            background: #f8d7da;
+            color: #721c24;
+            border: 2px solid #dc3545;
+        }
+        canvas {
+            border: 2px solid #ddd;
+            width: 100%;
+            max-width: 640px;
+            height: 360px;
+            background: #000;
+            display: block;
+            margin: 20px auto;
+        }
+        .controls {
+            margin: 20px 0;
+            padding: 15px;
+            background: white;
+            border-radius: 6px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        input[type="text"] {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            padding: 10px 20px;
+            margin-right: 10px;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+        button:hover {
+            opacity: 0.8;
+        }
+        button:first-of-type {
+            background: #28a745;
+            color: white;
+        }
+        button:last-of-type {
+            background: #dc3545;
+            color: white;
+        }
+        .stats {
+            font-family: 'Courier New', monospace;
+            background: white;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 6px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .stats div {
+            padding: 5px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .stats div:last-child {
+            border-bottom: none;
+        }
+        .stats span {
+            color: #007bff;
+            font-weight: bold;
+        }
+        .info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        .info strong {
+            color: #0c5460;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebSocket Streaming Media Player - Quick Verification</h1>
+
+    <div class="info">
+        <strong>Note:</strong> This is a quick verification demo for testing WebSocket connection and data reception functionality.<br>
+    </div>
+
+    <div class="controls">
+        <label for="wsUrl" style="font-weight: bold; margin-right: 10px;">WebSocket URL:</label>
+        <input type="text" id="wsUrl" placeholder="ws://192.168.50.101:8080" value="ws://192.168.50.101:8080" style="width: 300px;">
+        <button onclick="connect()">Connect</button>
+        <button onclick="disconnect()">Disconnect</button>
+    </div>
+
+    <div id="status" class="status disconnected">Status: Disconnected</div>
+
+    <canvas id="videoCanvas" width="640" height="360"></canvas>
+
+    <div class="stats">
+        <h3 style="margin-top: 0; color: #333;">Connection Statistics</h3>
+        <div>Bytes Received: <span id="bytesReceived">0</span> bytes</div>
+        <div>Messages Received: <span id="messagesReceived">0</span></div>
+        <div>Connection Duration: <span id="connectionTime">0</span> seconds</div>
+        <div>Average Rate: <span id="dataRate">0</span> KB/s</div>
+    </div>
+
+    <div class="stats">
+        <h3 style="margin-top: 0; color: #333;">Buffer Queue Status</h3>
+        <div>Queue Length: <span id="bufferSize">0</span> / <span id="bufferMaxSize">0</span> packets</div>
+        <div>Queue Bytes: <span id="bufferBytes">0</span> / <span id="bufferMaxBytes">0</span> KB</div>
+        <div>Queue Usage: <span id="bufferUsage">0</span>%</div>
+        <div>Total Enqueued: <span id="bufferEnqueued">0</span> packets</div>
+        <div>Total Dequeued: <span id="bufferDequeued">0</span> packets</div>
+        <div>Overflow Count: <span id="bufferOverflows">0</span></div>
+        <div>Dropped Data: <span id="bufferDropped">0</span> KB</div>
+    </div>
+
+    <div class="stats">
+        <h3 style="margin-top: 0; color: #333;">Decoder Performance Statistics</h3>
+        <div>Decoding Frame Rate: <span id="decoderFPS">0</span> fps</div>
+        <div>Average Decode Time: <span id="decodeTime">0</span> ms</div>
+        <div>Total Decoded Frames: <span id="totalFrames">0</span></div>
+        <div>Dropped Frames: <span id="droppedFrames">0</span></div>
+        <div>Video Resolution: <span id="videoResolution">N/A</span></div>
+        <div>Decoder Status: <span id="decoderStatus">Not Initialized</span></div>
+    </div>
+
+    <script type="module" src="src/js/decoder-init.js"></script>
+    <script src="src/js/app.js"></script>
+</body>
+</html>
