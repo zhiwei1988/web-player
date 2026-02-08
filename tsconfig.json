@@ -31,6 +31,7 @@
     "dist",
     "build",
     "ffmpeg-build",
-    "third_party"
+    "third_party",
+    "src/server/build"
   ]
 }

@@ -15,7 +15,7 @@ int32_t ConnectionManager::AddConnection(int32_t fd, const std::string& ip) {
     conn.id = id;
     conn.ip = ip;
     conn.state = ConnState::HANDSHAKING;
-    conn.nalIndex = 0;
+    conn.auIndex = 0;
     conn.stats.messagesSent = 0;
     conn.stats.bytesSent = 0;
     conn.stats.connectedAt = std::chrono::steady_clock::now();

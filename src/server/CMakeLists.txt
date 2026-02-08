@@ -16,6 +16,8 @@ set(SOURCES
     nal_parser.cpp
     connection.cpp
     timer.cpp
+    bitstream_reader.cpp
+    sps_parser.cpp
 )
 
 # Executable

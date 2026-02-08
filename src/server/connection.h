@@ -36,7 +36,7 @@ struct Connection {
     std::string ip;
     ConnState state;
     ConnStats stats;
-    size_t nalIndex;
+    size_t auIndex;
     std::vector<uint8_t> recvBuffer;
 };
 

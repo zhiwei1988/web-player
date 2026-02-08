@@ -12,7 +12,6 @@
 using namespace server;
 
 static const uint16_t DEFAULT_PORT = 8080;
-static const uint32_t NAL_SEND_INTERVAL_MS = 40;
 
 static volatile bool gRunning = true;
 
@@ -34,7 +33,7 @@ public:
         std::printf("Codec type: %s\n", isH265_ ? "H.265/HEVC" : "H.264/AVC");
         std::printf("Video file: %s\n", videoPath_.c_str());
 
-        if (!nalParser_.LoadFile(videoPath_)) {
+        if (!nalParser_.LoadFile(videoPath_, isH265_)) {
             return false;
         }
 
@@ -42,7 +41,13 @@ public:
             return false;
         }
 
-        if (!timer_.Start(NAL_SEND_INTERVAL_MS)) {
+        // Calculate timer interval from detected frame rate
+        double fps = nalParser_.GetFrameRate();
+        uint32_t intervalMs = static_cast<uint32_t>(1000.0 / fps);
+
+        std::printf("Send interval: %u ms (%.2f fps)\n", intervalMs, fps);
+
+        if (!timer_.Start(intervalMs)) {
             return false;
         }
 
@@ -224,33 +229,36 @@ private:
                 continue;
             }
 
-            if (nalParser_.GetNalCount() == 0) {
+            if (nalParser_.GetAccessUnitCount() == 0) {
                 continue;
             }
 
-            size_t nalIndex = conn.nalIndex % nalParser_.GetNalCount();
-            const NalUnit* nal = nalParser_.GetNalUnit(nalIndex);
+            size_t auIndex = conn.auIndex % nalParser_.GetAccessUnitCount();
+            const AccessUnit* au = nalParser_.GetAccessUnit(auIndex);
 
-            if (nal == nullptr) {
+            if (au == nullptr) {
                 continue;
             }
 
-            // Log every 25 NAL units
-            if (nalIndex % 25 == 0) {
-                std::printf("[Connection #%d] Sending NAL unit %zu/%zu (%zu bytes)\n",
-                            conn.id, nalIndex, nalParser_.GetNalCount(), nal->data.size());
+            // Log every 25 Access Units
+            if (auIndex % 25 == 0) {
+                std::printf("[Connection #%d] Sending AU %zu/%zu (%zu NAL units)\n",
+                            conn.id, auIndex, nalParser_.GetAccessUnitCount(), au->nalUnits.size());
             }
 
-            // Encode and send
-            auto frame = WebSocket::EncodeFrame(WsOpcode::BINARY,
-                                                nal->data.data(), nal->data.size());
+            // Send all NAL units in this Access Unit
+            for (const auto& nal : au->nalUnits) {
+                auto frame = WebSocket::EncodeFrame(WsOpcode::BINARY,
+                                                    nal.data.data(), nal.data.size());
 
-            int32_t sent = tcpServer_.SendData(conn.fd, frame.data(), frame.size());
-            if (sent > 0) {
-                conn.stats.messagesSent++;
-                conn.stats.bytesSent += nal->data.size();
-                conn.nalIndex++;
+                int32_t sent = tcpServer_.SendData(conn.fd, frame.data(), frame.size());
+                if (sent > 0) {
+                    conn.stats.messagesSent++;
+                    conn.stats.bytesSent += nal.data.size();
+                }
             }
+
+            conn.auIndex++;
         }
     }
 

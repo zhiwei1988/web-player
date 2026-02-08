@@ -147,7 +147,7 @@ class DataBufferQueue {
 
 let ws = null;
 let dataBuffer = null;  // 数据缓冲队列实例
-let consumerInterval = null;  // 消费者定时器
+let processing = false; // processQueue 并发锁
 let stats = {
     bytesReceived: 0,
     messagesReceived: 0,
@@ -164,54 +164,51 @@ function updateStatus(state, message) {
 }
 
 /**
- * 数据消费者 - 从缓冲队列读取数据并发送给解码器
+ * Data-driven consumer: drain queue as long as data is available.
+ * The `processing` flag prevents concurrent invocations.
  */
-async function startConsumer() {
-    if (consumerInterval) {
-        clearInterval(consumerInterval);
-    }
-
-    // 每33ms从缓冲队列中取出一个数据包（约30fps）
-    consumerInterval = setInterval(async () => {
-        if (dataBuffer && !dataBuffer.isEmpty()) {
+async function processQueue() {
+    if (processing) return;
+    processing = true;
+    try {
+        while (dataBuffer && !dataBuffer.isEmpty()) {
             const packet = dataBuffer.dequeue();
-            if (packet) {
-                const dataSize = packet.data instanceof ArrayBuffer ?
-                               packet.data.byteLength :
-                               (packet.data instanceof Blob ? packet.data.size : 0);
-                const age = Date.now() - packet.timestamp;
+            if (!packet) break;
 
-                try {
-                    if (window.decoderBridge) {
-                        let arrayBuffer = packet.data;
+            try {
+                if (window.decoderBridge) {
+                    let arrayBuffer = packet.data;
 
-                        if (packet.data instanceof Blob) {
-                            arrayBuffer = await packet.data.arrayBuffer();
-                        }
-
-                        if (arrayBuffer instanceof ArrayBuffer) {
-                            const uint8Array = new Uint8Array(arrayBuffer);
-                            await window.decoderBridge.decode(uint8Array, packet.timestamp);
-                        }
-                    } else {
-                        console.log(`消费数据包: ${dataSize} 字节 (队列延迟: ${age}ms, 解码器未初始化)`);
+                    if (packet.data instanceof Blob) {
+                        arrayBuffer = await packet.data.arrayBuffer();
                     }
-                } catch (error) {
-                    console.error(`解码错误: ${error.message}`);
+
+                    if (arrayBuffer instanceof ArrayBuffer) {
+                        const uint8Array = new Uint8Array(arrayBuffer);
+                        await window.decoderBridge.decode(uint8Array, packet.timestamp);
+                    }
+                } else {
+                    const dataSize = packet.data instanceof ArrayBuffer ?
+                                   packet.data.byteLength :
+                                   (packet.data instanceof Blob ? packet.data.size : 0);
+                    const age = Date.now() - packet.timestamp;
+                    console.log(`消费数据包: ${dataSize} 字节 (队列延迟: ${age}ms, 解码器未初始化)`);
                 }
+            } catch (error) {
+                console.error(`解码错误: ${error.message}`);
             }
         }
-    }, 33);  // 约30fps
-
-    console.log('数据消费者已启动 (每33ms消费1个数据包)');
+    } finally {
+        processing = false;
+    }
 }
 
 function stopConsumer() {
-    if (consumerInterval) {
-        clearInterval(consumerInterval);
-        consumerInterval = null;
-        console.log('数据消费者已停止');
+    processing = false;
+    if (dataBuffer) {
+        dataBuffer.clear();
     }
+    console.log('数据消费者已停止');
 }
 
 function updateStats() {
@@ -300,9 +297,6 @@ function connect() {
             });
             console.log('数据缓冲队列已初始化 (最大: 100包/10MB)');
 
-            // 启动数据消费者（模拟解码器从缓冲队列读取数据）
-            startConsumer();
-
             updateStatus('connected', `已连接到 ${url}`);
             console.log('WebSocket 连接成功！');
 
@@ -329,6 +323,7 @@ function connect() {
                 // 将二进制数据放入缓冲队列
                 if (dataBuffer) {
                     dataBuffer.enqueue(event.data);
+                    processQueue();
                 }
 
                 console.log(`接收二进制数据: ${dataSize} 字节 (类型: ${dataType}) → 缓冲队列`);
@@ -340,6 +335,7 @@ function connect() {
                 // 将 Blob 数据放入缓冲队列
                 if (dataBuffer) {
                     dataBuffer.enqueue(event.data);
+                    processQueue();
                 }
 
                 log(`接收二进制数据: ${dataSize} 字节 (类型: ${dataType}) → 缓冲队列`);

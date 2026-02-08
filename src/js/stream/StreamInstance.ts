@@ -12,7 +12,6 @@ export interface StreamConfig {
     maxSize?: number;
     maxBytes?: number;
   };
-  consumeInterval?: number;
 }
 
 export interface StreamStats {
@@ -35,7 +34,7 @@ export class StreamInstance {
 
   private ws: WebSocket | null = null;
   private queue: DataBufferQueue;
-  private consumerInterval: number | null = null;
+  private processing: boolean = false;
   private decoder: WorkerBridge | null = null;
 
   private status: StreamStatus = 'disconnected';
@@ -50,7 +49,6 @@ export class StreamInstance {
 
   private lastUpdateTime: number = 0;
   private lastBytesReceived: number = 0;
-  private consumeIntervalMs: number;
 
   private onStatusChange?: (status: StreamStatus) => void;
   private onStatsUpdate?: (stats: StreamStats) => void;
@@ -62,7 +60,6 @@ export class StreamInstance {
     this.codecType = config.codecType;
     this.canvas = config.canvas;
     this.wasmPath = config.wasmPath || '/dist/decoder.js';
-    this.consumeIntervalMs = config.consumeInterval || 33;
 
     this.queue = new DataBufferQueue(config.bufferConfig || {
       maxSize: 100,
@@ -80,7 +77,6 @@ export class StreamInstance {
     try {
       await this.initDecoder();
       await this.connectWebSocket();
-      this.startConsumer();
     } catch (error) {
       this.updateStatus('error');
       this.handleError(`Connection failed: ${error}`);
@@ -89,7 +85,7 @@ export class StreamInstance {
   }
 
   disconnect(): void {
-    this.stopConsumer();
+    this.processing = false;
 
     if (this.ws) {
       this.ws.close();
@@ -175,7 +171,7 @@ export class StreamInstance {
 
       this.ws.onclose = () => {
         this.updateStatus('disconnected');
-        this.stopConsumer();
+        this.processing = false;
       };
     });
   }
@@ -187,12 +183,14 @@ export class StreamInstance {
       const dataSize = event.data.byteLength;
       this.stats.bytesReceived += dataSize;
       this.queue.enqueue(event.data);
+      this.processQueue();
 
       this.updateDataRate();
     } else if (event.data instanceof Blob) {
       const dataSize = event.data.size;
       this.stats.bytesReceived += dataSize;
       this.queue.enqueue(event.data);
+      this.processQueue();
 
       this.updateDataRate();
     } else {
@@ -215,38 +213,31 @@ export class StreamInstance {
     }
   }
 
-  private startConsumer(): void {
-    if (this.consumerInterval !== null) {
-      return;
-    }
-
-    this.consumerInterval = window.setInterval(async () => {
-      if (!this.queue.isEmpty() && this.decoder) {
+  private async processQueue(): Promise<void> {
+    if (this.processing) return;
+    this.processing = true;
+    try {
+      while (!this.queue.isEmpty() && this.decoder) {
         const packet = this.queue.dequeue();
-        if (packet) {
-          try {
-            let arrayBuffer = packet.data;
+        if (!packet) break;
 
-            if (packet.data instanceof Blob) {
-              arrayBuffer = await packet.data.arrayBuffer();
-            }
+        try {
+          let arrayBuffer = packet.data;
 
-            if (arrayBuffer instanceof ArrayBuffer) {
-              const uint8Array = new Uint8Array(arrayBuffer);
-              await this.decoder.decode(uint8Array, packet.timestamp);
-            }
-          } catch (error) {
-            this.handleError(`Decode error: ${error}`);
+          if (packet.data instanceof Blob) {
+            arrayBuffer = await packet.data.arrayBuffer();
           }
+
+          if (arrayBuffer instanceof ArrayBuffer) {
+            const uint8Array = new Uint8Array(arrayBuffer);
+            await this.decoder.decode(uint8Array, packet.timestamp);
+          }
+        } catch (error) {
+          this.handleError(`Decode error: ${error}`);
         }
       }
-    }, this.consumeIntervalMs);
-  }
-
-  private stopConsumer(): void {
-    if (this.consumerInterval !== null) {
-      clearInterval(this.consumerInterval);
-      this.consumerInterval = null;
+    } finally {
+      this.processing = false;
     }
   }
 
