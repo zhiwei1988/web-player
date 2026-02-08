@@ -13,6 +13,7 @@ export class StreamCard {
   private canvas: HTMLCanvasElement;
   private statusIndicator: HTMLElement;
   private statsPanel: HTMLElement;
+  private fpsOverlay: HTMLElement;
   private statsCollapsed: boolean = true;
 
   private config: StreamCardConfig;
@@ -24,6 +25,7 @@ export class StreamCard {
     this.canvas = this.container.querySelector('.stream-canvas') as HTMLCanvasElement;
     this.statusIndicator = this.container.querySelector('.status-indicator') as HTMLElement;
     this.statsPanel = this.container.querySelector('.stats-content') as HTMLElement;
+    this.fpsOverlay = this.container.querySelector('.fps-overlay') as HTMLElement;
   }
 
   private createContainer(): HTMLElement {
@@ -43,6 +45,9 @@ export class StreamCard {
           <canvas class="stream-canvas w-full h-auto" width="640" height="360"></canvas>
           <div class="stream-overlay absolute inset-0 flex items-center justify-center text-white text-sm">
             Disconnected
+          </div>
+          <div class="fps-overlay absolute top-1 right-1 px-2 py-1 bg-black bg-opacity-60 text-white text-xs font-mono rounded hidden">
+            0.0 FPS
           </div>
         </div>
 
@@ -156,20 +161,24 @@ export class StreamCard {
         this.statusIndicator.className = 'status-indicator w-3 h-3 rounded-full bg-gray-400';
         overlay.textContent = 'Disconnected';
         overlay.classList.remove('hidden');
+        this.fpsOverlay.classList.add('hidden');
         break;
       case 'connecting':
         this.statusIndicator.className = 'status-indicator w-3 h-3 rounded-full bg-yellow-400';
         overlay.textContent = 'Connecting...';
         overlay.classList.remove('hidden');
+        this.fpsOverlay.classList.add('hidden');
         break;
       case 'connected':
         this.statusIndicator.className = 'status-indicator w-3 h-3 rounded-full bg-green-500';
         overlay.classList.add('hidden');
+        this.fpsOverlay.classList.remove('hidden');
         break;
       case 'error':
         this.statusIndicator.className = 'status-indicator w-3 h-3 rounded-full bg-red-500';
         overlay.textContent = 'Error';
         overlay.classList.remove('hidden');
+        this.fpsOverlay.classList.add('hidden');
         break;
     }
   }
@@ -191,6 +200,9 @@ export class StreamCard {
 
     if (stats.decoderStats) {
       fpsEl.textContent = stats.decoderStats.currentFPS.toFixed(1);
+      this.fpsOverlay.textContent = `${stats.decoderStats.currentFPS.toFixed(1)} FPS`;
+    } else {
+      this.fpsOverlay.textContent = '0.0 FPS';
     }
   }
 
