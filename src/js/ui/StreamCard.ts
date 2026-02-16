@@ -54,7 +54,7 @@ export class StreamCard {
         <div class="stream-controls p-3 bg-gray-50 border-t">
           <div class="flex gap-2 mb-2">
             <input type="text" class="ws-url flex-1 px-2 py-1 text-xs border rounded"
-                   placeholder="ws://192.168.50.101:8080" value="ws://192.168.50.101:8080">
+                   placeholder="wss://192.168.50.101:6061" value="wss://192.168.50.101:6061">
             <select class="codec-select px-2 py-1 text-xs border rounded">
               <option value="h264">H.264</option>
               <option value="hevc">H.265</option>

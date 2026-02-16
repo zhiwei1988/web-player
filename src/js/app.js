@@ -271,7 +271,7 @@ function updateStats() {
 }
 
 function connect() {
-    const url = document.getElementById('wsUrl').value || 'ws://localhost:8080';
+    const url = document.getElementById('wsUrl').value || 'wss://localhost:6061';
 
     if (ws && ws.readyState === WebSocket.OPEN) {
         console.error('已存在连接，请先断开');

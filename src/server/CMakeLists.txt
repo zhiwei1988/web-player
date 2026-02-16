@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find mbedtls
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(MBEDTLS REQUIRED mbedtls mbedcrypto)
+pkg_check_modules(MBEDTLS REQUIRED mbedtls mbedx509 mbedcrypto)
 
 # Source files
 set(SOURCES
@@ -18,6 +18,8 @@ set(SOURCES
     timer.cpp
     bitstream_reader.cpp
     sps_parser.cpp
+    tls_context.cpp
+    tls_server.cpp
 )
 
 # Executable
@@ -37,5 +39,5 @@ target_link_libraries(video_server
 
 # Output to bin directory
 set_target_properties(video_server PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/../../bin
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/../../dist
 )

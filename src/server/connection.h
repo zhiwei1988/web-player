@@ -13,7 +13,8 @@ namespace server {
  * @brief Connection state
  */
 enum class ConnState {
-    HANDSHAKING,
+    HANDSHAKING_TLS,
+    HANDSHAKING_WS,
     CONNECTED,
     CLOSING
 };

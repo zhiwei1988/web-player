@@ -14,7 +14,7 @@ int32_t ConnectionManager::AddConnection(int32_t fd, const std::string& ip) {
     conn.fd = fd;
     conn.id = id;
     conn.ip = ip;
-    conn.state = ConnState::HANDSHAKING;
+    conn.state = ConnState::HANDSHAKING_WS;
     conn.auIndex = 0;
     conn.stats.messagesSent = 0;
     conn.stats.bytesSent = 0;

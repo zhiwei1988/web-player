@@ -5,13 +5,13 @@
 
 #include "connection.h"
 #include "nal_parser.h"
-#include "tcp_server.h"
+#include "tls_server.h"
 #include "timer.h"
 #include "websocket.h"
 
 using namespace server;
 
-static const uint16_t DEFAULT_PORT = 8080;
+static const uint16_t DEFAULT_PORT = 6061;
 
 static volatile bool gRunning = true;
 
@@ -24,7 +24,9 @@ class VideoServer {
 public:
     VideoServer()
         : port_(DEFAULT_PORT),
-          isH265_(false) {
+          isH265_(false),
+          certPath_(""),
+          keyPath_("") {
     }
 
     bool Initialize(int32_t argc, char* argv[]) {
@@ -37,7 +39,7 @@ public:
             return false;
         }
 
-        if (!tcpServer_.Start(port_)) {
+        if (!tlsServer_.Start(port_, certPath_, keyPath_)) {
             return false;
         }
 
@@ -51,7 +53,7 @@ public:
             return false;
         }
 
-        tcpServer_.RegisterTimer(timer_.GetFd());
+        tlsServer_.RegisterTimer(timer_.GetFd());
         SetupCallbacks();
 
         return true;
@@ -61,8 +63,8 @@ public:
         std::printf("\nWebSocket server running on port %u\n", port_);
         std::printf("Press Ctrl+C to stop\n\n");
 
-        while (gRunning && tcpServer_.IsRunning()) {
-            tcpServer_.ProcessEvents(1000);
+        while (gRunning && tlsServer_.IsRunning()) {
+            tlsServer_.ProcessEvents(1000);
         }
 
         Shutdown();
@@ -90,6 +92,12 @@ private:
             } else if (std::strcmp(argv[i], "-f") == 0 && i + 1 < argc) {
                 videoPath_ = argv[i + 1];
                 ++i;
+            } else if (std::strcmp(argv[i], "--cert") == 0 && i + 1 < argc) {
+                certPath_ = argv[i + 1];
+                ++i;
+            } else if (std::strcmp(argv[i], "--key") == 0 && i + 1 < argc) {
+                keyPath_ = argv[i + 1];
+                ++i;
             } else if (std::strcmp(argv[i], "-h") == 0) {
                 PrintUsage(argv[0]);
                 std::exit(0);
@@ -101,15 +109,30 @@ private:
             videoPath_ = isH265_ ? "./tests/fixtures/TSU_640x360.h265"
                                  : "./tests/fixtures/test_video.h264";
         }
+
+        // Validate cert/key pairing
+        if (!certPath_.empty() && keyPath_.empty()) {
+            std::fprintf(stderr, "Error: --cert specified without --key\n");
+            std::exit(1);
+        }
+        if (certPath_.empty() && !keyPath_.empty()) {
+            std::fprintf(stderr, "Error: --key specified without --cert\n");
+            std::exit(1);
+        }
     }
 
     void PrintUsage(const char* program) {
         std::printf("Usage: %s [options]\n", program);
         std::printf("Options:\n");
-        std::printf("  -p <port>   Port number (default: %u)\n", DEFAULT_PORT);
-        std::printf("  -c <codec>  Codec type: h264, h265 (default: h264)\n");
-        std::printf("  -f <file>   Video file path\n");
-        std::printf("  -h          Show this help\n");
+        std::printf("  -p <port>      Port number (default: %u)\n", DEFAULT_PORT);
+        std::printf("  -c <codec>     Codec type: h264, h265 (default: h264)\n");
+        std::printf("  -f <file>      Video file path\n");
+        std::printf("  --cert <file>  TLS certificate file (PEM format)\n");
+        std::printf("  --key <file>   TLS private key file (PEM format)\n");
+        std::printf("  -h             Show this help\n");
+        std::printf("\nTLS:\n");
+        std::printf("  Both --cert and --key must be specified together.\n");
+        std::printf("  If not specified, a self-signed certificate will be generated.\n");
         std::printf("\nEnvironment:\n");
         std::printf("  CODEC_TYPE  Codec type (h264 or h265)\n");
     }
@@ -129,9 +152,9 @@ private:
             HandleData(fd, data, len);
         };
 
-        tcpServer_.SetCallbacks(callbacks);
+        tlsServer_.SetCallbacks(callbacks);
 
-        tcpServer_.SetTimerCallback([this]() {
+        tlsServer_.SetTimerCallback([this]() {
             OnTimer();
         });
     }
@@ -145,7 +168,7 @@ private:
         // Append to receive buffer
         conn->recvBuffer.insert(conn->recvBuffer.end(), data, data + len);
 
-        if (conn->state == ConnState::HANDSHAKING) {
+        if (conn->state == ConnState::HANDSHAKING_WS) {
             HandleHandshake(fd, conn);
         } else if (conn->state == ConnState::CONNECTED) {
             HandleWebSocketFrame(fd, conn);
@@ -160,17 +183,17 @@ private:
         }
 
         if (!WebSocket::IsHttpRequest(conn->recvBuffer.data(), conn->recvBuffer.size())) {
-            tcpServer_.CloseConnection(fd);
+            tlsServer_.CloseConnection(fd);
             return;
         }
 
         std::string response;
         if (!WebSocket::HandleHandshake(request, response)) {
-            tcpServer_.CloseConnection(fd);
+            tlsServer_.CloseConnection(fd);
             return;
         }
 
-        tcpServer_.SendData(fd, reinterpret_cast<const uint8_t*>(response.data()),
+        tlsServer_.SendData(fd, reinterpret_cast<const uint8_t*>(response.data()),
                             response.size());
 
         conn->recvBuffer.clear();
@@ -206,12 +229,12 @@ private:
                     break;
                 case WsOpcode::PING: {
                     auto pong = WebSocket::CreatePongFrame(frame.payload);
-                    tcpServer_.SendData(fd, pong.data(), pong.size());
+                    tlsServer_.SendData(fd, pong.data(), pong.size());
                     break;
                 }
                 case WsOpcode::CLOSE:
                     conn->state = ConnState::CLOSING;
-                    tcpServer_.CloseConnection(fd);
+                    tlsServer_.CloseConnection(fd);
                     return;
                 default:
                     break;
@@ -251,7 +274,7 @@ private:
                 auto frame = WebSocket::EncodeFrame(WsOpcode::BINARY,
                                                     nal.data.data(), nal.data.size());
 
-                int32_t sent = tcpServer_.SendData(conn.fd, frame.data(), frame.size());
+                int32_t sent = tlsServer_.SendData(conn.fd, frame.data(), frame.size());
                 if (sent > 0) {
                     conn.stats.messagesSent++;
                     conn.stats.bytesSent += nal.data.size();
@@ -268,22 +291,24 @@ private:
         // Send close frame to all clients
         auto closeFrame = WebSocket::CreateCloseFrame(1000, "Server is shutting down");
         for (auto& pair : connManager_.GetConnections()) {
-            tcpServer_.SendData(pair.first, closeFrame.data(), closeFrame.size());
+            tlsServer_.SendData(pair.first, closeFrame.data(), closeFrame.size());
         }
 
         timer_.Stop();
-        tcpServer_.Stop();
+        tlsServer_.Stop();
 
         std::printf("Server closed\n");
     }
 
-    TcpServer tcpServer_;
+    TlsServer tlsServer_;
     Timer timer_;
     NalParser nalParser_;
     ConnectionManager connManager_;
     uint16_t port_;
     bool isH265_;
     std::string videoPath_;
+    std::string certPath_;
+    std::string keyPath_;
 };
 
 int main(int argc, char* argv[]) {
