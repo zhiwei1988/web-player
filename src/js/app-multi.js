@@ -24,15 +24,13 @@ function addStream() {
 
     const card = new StreamCard({
         id: streamId,
-        onConnect: async (wsUrl, codec) => {
+        onConnect: async (wsUrl) => {
             try {
-                const codecType = codec === 'hevc' ? 'hevc' : 'h264';
                 const canvas = card.getCanvas();
 
                 const stream = streamManager.createStream({
                     id: streamId,
                     wsUrl: wsUrl,
-                    codecType: codecType,
                     canvas: canvas,
                     wasmPath: '/dist/decoder.js'
                 });

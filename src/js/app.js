@@ -270,6 +270,29 @@ function updateStats() {
     }
 }
 
+async function handleSignal(msg) {
+    let data;
+    try {
+        data = JSON.parse(msg);
+    } catch (e) {
+        return;
+    }
+
+    if (data.type === 'media-offer') {
+        const streams = data.payload && data.payload.streams;
+        const videoStream = streams ? streams.find(s => s.type === 'video') : null;
+        const codecType = videoStream ? videoStream.codec : 'h264';
+        try {
+            await window.initDecoder(codecType);
+            ws.send(JSON.stringify({ type: 'media-answer', payload: { accepted: true } }));
+        } catch (e) {
+            ws.send(JSON.stringify({ type: 'media-answer', payload: { accepted: false, reason: e.message } }));
+        }
+    } else if (data.type === 'metadata') {
+        console.log(`元数据: 帧号 ${data.frameInfo?.frameNumber || 'N/A'}`);
+    }
+}
+
 function connect() {
     const url = document.getElementById('wsUrl').value || 'wss://localhost:6061';
 
@@ -340,7 +363,7 @@ function connect() {
 
                 log(`接收二进制数据: ${dataSize} 字节 (类型: ${dataType}) → 缓冲队列`);
             } else {
-                // 文本数据（可能是元数据或心跳）
+                // 文本信令消息
                 dataSize = new Blob([event.data]).size;
                 dataType = 'Text';
                 stats.bytesReceived += dataSize;
@@ -348,18 +371,7 @@ function connect() {
                 const preview = event.data.length > 50 ? event.data.substring(0, 50) + '...' : event.data;
                 console.log(`接收文本数据: ${preview}`);
 
-                // 文本数据不放入缓冲队列，直接处理
-                try {
-                    const jsonData = JSON.parse(event.data);
-                    if (jsonData.type === 'heartbeat') {
-                        // 心跳消息，静默处理
-                    } else if (jsonData.type === 'metadata') {
-                        // 元数据，可以显示在日志中
-                        console.log(`元数据: 帧号 ${jsonData.frameInfo?.frameNumber || 'N/A'}`);
-                    }
-                } catch (e) {
-                    // 非 JSON 数据，忽略
-                }
+                handleSignal(event.data);
             }
 
             updateStats();

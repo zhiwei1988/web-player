@@ -5,7 +5,6 @@ import type { CodecType, VideoFrame, DecoderStats } from '../decoder/types.js';
 export interface StreamConfig {
   id: string;
   wsUrl: string;
-  codecType: CodecType;
   canvas: HTMLCanvasElement;
   wasmPath?: string;
   bufferConfig?: {
@@ -28,7 +27,6 @@ export type StreamStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
 export class StreamInstance {
   readonly id: string;
   private wsUrl: string;
-  private codecType: CodecType;
   private canvas: HTMLCanvasElement;
   private wasmPath: string;
 
@@ -57,7 +55,6 @@ export class StreamInstance {
   constructor(config: StreamConfig) {
     this.id = config.id;
     this.wsUrl = config.wsUrl;
-    this.codecType = config.codecType;
     this.canvas = config.canvas;
     this.wasmPath = config.wasmPath || '/dist/decoder.js';
 
@@ -75,7 +72,6 @@ export class StreamInstance {
     this.updateStatus('connecting');
 
     try {
-      await this.initDecoder();
       await this.connectWebSocket();
     } catch (error) {
       this.updateStatus('error');
@@ -123,7 +119,7 @@ export class StreamInstance {
     this.onError = callback;
   }
 
-  private async initDecoder(): Promise<void> {
+  private async initDecoder(codecType: CodecType): Promise<void> {
     const workerPath = '/dist/js/worker/decode-worker.js';
     this.decoder = new WorkerBridge(workerPath);
 
@@ -141,7 +137,7 @@ export class StreamInstance {
     });
 
     await this.decoder.init({
-      codecType: this.codecType,
+      codecType,
       wasmPath: this.wasmPath
     });
   }
@@ -151,18 +147,41 @@ export class StreamInstance {
       this.ws = new WebSocket(this.wsUrl);
       this.ws.binaryType = 'arraybuffer';
 
+      let negotiated = false;
+
       this.ws.onopen = () => {
-        this.stats.connectionStartTime = Date.now();
-        this.stats.bytesReceived = 0;
-        this.stats.messagesReceived = 0;
-        this.lastUpdateTime = Date.now();
-        this.lastBytesReceived = 0;
-        this.updateStatus('connected');
-        resolve();
+        // Wait for media-offer before reporting connected
       };
 
-      this.ws.onmessage = (event) => {
-        this.handleWebSocketMessage(event);
+      this.ws.onmessage = async (event) => {
+        if (!negotiated && typeof event.data === 'string') {
+          let msg: any;
+          try { msg = JSON.parse(event.data); } catch { return; }
+
+          if (msg.type === 'media-offer') {
+            const streams: Array<{type: string, codec: string}> = msg.payload?.streams || [];
+            const videoStream = streams.find(s => s.type === 'video');
+            const codecType = (videoStream?.codec as CodecType) || 'h264';
+
+            try {
+              await this.initDecoder(codecType);
+              this.ws!.send(JSON.stringify({ type: 'media-answer', payload: { accepted: true } }));
+              negotiated = true;
+              this.stats.connectionStartTime = Date.now();
+              this.stats.bytesReceived = 0;
+              this.stats.messagesReceived = 0;
+              this.lastUpdateTime = Date.now();
+              this.lastBytesReceived = 0;
+              this.updateStatus('connected');
+              resolve();
+            } catch (error) {
+              this.ws!.send(JSON.stringify({ type: 'media-answer', payload: { accepted: false, reason: String(error) } }));
+              reject(new Error(`Decoder init failed: ${error}`));
+            }
+          }
+        } else {
+          this.handleWebSocketMessage(event);
+        }
       };
 
       this.ws.onerror = () => {

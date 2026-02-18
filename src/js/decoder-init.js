@@ -3,7 +3,7 @@ import { WorkerBridge } from '../../dist/js/js/decoder/WorkerBridge.js';
 let decoderBridge = null;
 let lastVideoResolution = null;
 
-async function initDecoder() {
+async function initDecoder(codecType) {
     try {
         decoderBridge = new WorkerBridge('../../dist/js/worker/decode-worker.js');
 
@@ -31,17 +31,8 @@ async function initDecoder() {
             document.getElementById('decoderStatus').textContent = `错误: ${error}`;
         });
 
-        // 从 URL 参数获取编解码器类型
-        const urlParams = new URLSearchParams(window.location.search);
-        const urlCodec = urlParams.get('codec');
-        let codecType = 'h264';  // 默认 h264
-
-        if (urlCodec && (urlCodec === 'h264' || urlCodec === 'h265' || urlCodec === 'hevc')) {
-            codecType = urlCodec === 'hevc' ? 'h265' : urlCodec;
-        }
-
         await decoderBridge.init({
-            codecType: codecType,
+            codecType: codecType || 'h264',
             wasmPath: '/dist/decoder.js'
         });
 
@@ -52,6 +43,7 @@ async function initDecoder() {
     } catch (error) {
         console.error('Failed to initialize decoder:', error);
         document.getElementById('decoderStatus').textContent = `初始化失败: ${error.message}`;
+        throw error;
     }
 }
 
@@ -97,6 +89,4 @@ function renderFrame(frame) {
 
 window.initDecoder = initDecoder;
 window.renderFrame = renderFrame;
-
-initDecoder().catch(console.error);
 

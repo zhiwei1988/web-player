@@ -176,7 +176,8 @@ private:
 
         if (conn->state == ConnState::HANDSHAKING_WS) {
             HandleHandshake(fd, conn);
-        } else if (conn->state == ConnState::CONNECTED) {
+        } else if (conn->state == ConnState::NEGOTIATING ||
+                   conn->state == ConnState::STREAMING) {
             HandleWebSocketFrame(fd, conn);
         }
     }
@@ -206,6 +207,8 @@ private:
         conn->state = ConnState::CONNECTED;
 
         std::printf("[Connection #%d] WebSocket handshake completed\n", conn->id);
+
+        SendMediaOffer(fd, conn);
     }
 
     void HandleWebSocketFrame(int32_t fd, Connection* conn) {
@@ -226,7 +229,11 @@ private:
             switch (frame.opcode) {
                 case WsOpcode::TEXT: {
                     std::string msg(frame.payload.begin(), frame.payload.end());
-                    std::printf("[Connection #%d] Received message: %s\n", conn->id, msg.c_str());
+                    if (conn->state == ConnState::NEGOTIATING) {
+                        HandleNegotiation(fd, conn, msg);
+                    } else {
+                        std::printf("[Connection #%d] Received text: %s\n", conn->id, msg.c_str());
+                    }
                     break;
                 }
                 case WsOpcode::BINARY:
@@ -245,6 +252,75 @@ private:
                 default:
                     break;
             }
+        }
+    }
+
+    std::string BuildMediaOffer() const {
+        const char* codecStr = isH265_ ? "h265" : "h264";
+        double fps = 1000.0 / frameIntervalMs_;
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+            "{\"type\":\"media-offer\",\"payload\":{\"version\":1,\"streams\":[{\"type\":\"video\",\"codec\":\"%s\",\"framerate\":%.2f}]}}",
+            codecStr, fps);
+        return std::string(buf);
+    }
+
+    // Extracts the first string value for a given JSON key.
+    static std::string ExtractJsonString(const std::string& json, const std::string& key) {
+        std::string searchKey = "\"" + key + "\"";
+        size_t pos = json.find(searchKey);
+        if (pos == std::string::npos) return "";
+        pos = json.find(':', pos + searchKey.size());
+        if (pos == std::string::npos) return "";
+        pos = json.find('"', pos + 1);
+        if (pos == std::string::npos) return "";
+        size_t end = json.find('"', pos + 1);
+        if (end == std::string::npos) return "";
+        return json.substr(pos + 1, end - pos - 1);
+    }
+
+    // Extracts a boolean value for a given JSON key.
+    static bool ExtractJsonBool(const std::string& json, const std::string& key, bool defaultVal = false) {
+        std::string searchKey = "\"" + key + "\"";
+        size_t pos = json.find(searchKey);
+        if (pos == std::string::npos) return defaultVal;
+        pos = json.find(':', pos + searchKey.size());
+        if (pos == std::string::npos) return defaultVal;
+        pos++;
+        while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n' || json[pos] == '\r')) pos++;
+        if (pos + 4 <= json.size() && json.substr(pos, 4) == "true") return true;
+        if (pos + 5 <= json.size() && json.substr(pos, 5) == "false") return false;
+        return defaultVal;
+    }
+
+    void SendMediaOffer(int32_t fd, Connection* conn) {
+        std::string offer = BuildMediaOffer();
+        auto wsFrame = WebSocket::EncodeFrame(WsOpcode::TEXT,
+            reinterpret_cast<const uint8_t*>(offer.data()), offer.size());
+        tlsServer_.SendData(fd, wsFrame.data(), wsFrame.size());
+        conn->state = ConnState::NEGOTIATING;
+        conn->negotiateOfferTime = std::chrono::steady_clock::now();
+        std::printf("[Connection #%d] Sent media-offer: %s\n", conn->id, offer.c_str());
+    }
+
+    void HandleNegotiation(int32_t fd, Connection* conn, const std::string& msg) {
+        std::string type = ExtractJsonString(msg, "type");
+        if (type != "media-answer") {
+            std::printf("[Connection #%d] Unexpected message in NEGOTIATING state: type=%s\n",
+                        conn->id, type.c_str());
+            return;
+        }
+        bool accepted = ExtractJsonBool(msg, "accepted");
+        if (accepted) {
+            conn->state = ConnState::STREAMING;
+            std::printf("[Connection #%d] Negotiation accepted, starting stream\n", conn->id);
+        } else {
+            std::string reason = ExtractJsonString(msg, "reason");
+            std::printf("[Connection #%d] Negotiation rejected: %s\n", conn->id, reason.c_str());
+            conn->state = ConnState::CLOSING;
+            auto closeFrame = WebSocket::CreateCloseFrame(1000, "Negotiation rejected");
+            tlsServer_.SendData(fd, closeFrame.data(), closeFrame.size());
+            tlsServer_.CloseConnection(fd);
         }
     }
 
@@ -285,10 +361,25 @@ private:
     void OnTimer() {
         timer_.Read();
 
+        // Collect timed-out connections to close after iteration
+        std::vector<int32_t> negotiationTimeouts;
+
         for (auto& pair : connManager_.GetConnections()) {
             Connection& conn = pair.second;
 
-            if (conn.state != ConnState::CONNECTED) {
+            if (conn.state == ConnState::NEGOTIATING) {
+                auto elapsed = std::chrono::steady_clock::now() - conn.negotiateOfferTime;
+                if (elapsed > std::chrono::seconds(5)) {
+                    std::printf("[Connection #%d] Negotiation timeout\n", conn.id);
+                    auto closeFrame = WebSocket::CreateCloseFrame(1008, "Negotiation timeout");
+                    tlsServer_.SendData(conn.fd, closeFrame.data(), closeFrame.size());
+                    conn.state = ConnState::CLOSING;
+                    negotiationTimeouts.push_back(conn.fd);
+                }
+                continue;
+            }
+
+            if (conn.state != ConnState::STREAMING) {
                 continue;
             }
 
@@ -338,6 +429,10 @@ private:
             }
 
             conn.auIndex++;
+        }
+
+        for (int32_t fd : negotiationTimeouts) {
+            tlsServer_.CloseConnection(fd);
         }
 
         frameId_++;

@@ -16,6 +16,8 @@ enum class ConnState {
     HANDSHAKING_TLS,
     HANDSHAKING_WS,
     CONNECTED,
+    NEGOTIATING,
+    STREAMING,
     CLOSING
 };
 
@@ -39,6 +41,7 @@ struct Connection {
     ConnStats stats;
     size_t auIndex;
     std::vector<uint8_t> recvBuffer;
+    std::chrono::steady_clock::time_point negotiateOfferTime;
 };
 
 /**
