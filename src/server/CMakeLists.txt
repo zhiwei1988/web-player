@@ -20,6 +20,7 @@ set(SOURCES
     sps_parser.cpp
     tls_context.cpp
     tls_server.cpp
+    frame_protocol.cpp
 )
 
 # Executable

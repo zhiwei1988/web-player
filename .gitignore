@@ -1,4 +1,9 @@
 node_modules
+.claude/
+.vscode/
+.cursor/
+.cache/
+tests/
 
 # 构建产物
 dist/

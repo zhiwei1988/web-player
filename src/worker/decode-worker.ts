@@ -1,4 +1,5 @@
 import { DecoderWrapper } from '../js/decoder/DecoderWrapper.js';
+import { FrameParseStatus } from '../js/decoder/types.js';
 import type { WorkerRequest, WorkerResponse } from '../js/decoder/types.js';
 
 let decoder: DecoderWrapper | null = null;
@@ -40,6 +41,7 @@ async function handleInit(config: any): Promise<void> {
 
   decoder = new DecoderWrapper();
   await decoder.init(config);
+  decoder.initProtocol();
 
   const response: WorkerResponse = { type: 'ready' };
   self.postMessage(response);
@@ -56,12 +58,31 @@ async function handleInit(config: any): Promise<void> {
   }, 1000);
 }
 
-async function handleDecode(data: Uint8Array, pts?: number): Promise<void> {
+async function handleDecode(data: Uint8Array, _pts?: number): Promise<void> {
   if (!decoder) {
     throw new Error('Decoder not initialized');
   }
 
-  const frame = await decoder.decode(data, pts);
+  const parsed = decoder.parseFrame(data);
+  if (!parsed) {
+    return;
+  }
+
+  if (parsed.status === FrameParseStatus.FRAGMENT_PENDING) {
+    return;
+  }
+
+  if (parsed.status === FrameParseStatus.SKIP ||
+      parsed.status === FrameParseStatus.ERROR) {
+    return;
+  }
+
+  // FRAME_COMPLETE: only process VIDEO messages (msg_type = 0x01)
+  if (parsed.msgType !== 0x01) {
+    return;
+  }
+
+  const frame = await decoder.decode(parsed.payload, parsed.timestamp);
 
   if (frame) {
     const transferableBuffers = [

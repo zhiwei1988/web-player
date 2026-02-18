@@ -3,7 +3,10 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <chrono>
+
 #include "connection.h"
+#include "frame_protocol.h"
 #include "nal_parser.h"
 #include "tls_server.h"
 #include "timer.h"
@@ -25,6 +28,8 @@ public:
     VideoServer()
         : port_(DEFAULT_PORT),
           isH265_(false),
+          frameId_(0),
+          frameIntervalMs_(40.0),
           certPath_(""),
           keyPath_("") {
     }
@@ -45,7 +50,8 @@ public:
 
         // Calculate timer interval from detected frame rate
         double fps = nalParser_.GetFrameRate();
-        uint32_t intervalMs = static_cast<uint32_t>(1000.0 / fps);
+        frameIntervalMs_ = 1000.0 / fps;
+        uint32_t intervalMs = static_cast<uint32_t>(frameIntervalMs_);
 
         std::printf("Send interval: %u ms (%.2f fps)\n", intervalMs, fps);
 
@@ -242,6 +248,40 @@ private:
         }
     }
 
+    VideoFrameType DetectFrameType(const AccessUnit& au) {
+        for (const auto& nal : au.nalUnits) {
+            size_t offset = 0;
+            if (nal.data.size() >= 4 && nal.data[0] == 0 && nal.data[1] == 0) {
+                if (nal.data[2] == 0 && nal.data[3] == 1) {
+                    offset = 4;
+                } else if (nal.data[2] == 1) {
+                    offset = 3;
+                }
+            }
+            if (offset == 0 || offset >= nal.data.size()) {
+                continue;
+            }
+
+            if (isH265_) {
+                uint8_t nalType = (nal.data[offset] >> 1) & 0x3F;
+                if (nalType == 32) return VideoFrameType::VPS;
+                if (nalType == 33 || nalType == 34) return VideoFrameType::SPS_PPS;
+                // IDR_W_RADL(19), IDR_N_LP(20)
+                if (nalType == 19 || nalType == 20) return VideoFrameType::IDR;
+                // BLA/CRA (16-23 are IRAP)
+                if (nalType >= 16 && nalType <= 23) return VideoFrameType::I_FRAME;
+                // TRAIL_R(1), TSA_R(3), STSA_R(5) etc - treated as P
+                if (nalType >= 0 && nalType <= 15) return VideoFrameType::P_FRAME;
+            } else {
+                uint8_t nalType = nal.data[offset] & 0x1F;
+                if (nalType == 7 || nalType == 8) return VideoFrameType::SPS_PPS;
+                if (nalType == 5) return VideoFrameType::IDR;
+                if (nalType == 1) return VideoFrameType::P_FRAME;
+            }
+        }
+        return VideoFrameType::P_FRAME;
+    }
+
     void OnTimer() {
         timer_.Read();
 
@@ -269,20 +309,38 @@ private:
                             conn.id, auIndex, nalParser_.GetAccessUnitCount(), au->nalUnits.size());
             }
 
-            // Send all NAL units in this Access Unit
+            // Merge all NAL units into a single payload
+            std::vector<uint8_t> payload;
             for (const auto& nal : au->nalUnits) {
-                auto frame = WebSocket::EncodeFrame(WsOpcode::BINARY,
-                                                    nal.data.data(), nal.data.size());
+                payload.insert(payload.end(), nal.data.begin(), nal.data.end());
+            }
 
-                int32_t sent = tlsServer_.SendData(conn.fd, frame.data(), frame.size());
+            VideoCodec codec = isH265_ ? VideoCodec::H265 : VideoCodec::H264;
+            VideoFrameType frameType = DetectFrameType(*au);
+
+            int64_t timestampMs = static_cast<int64_t>(conn.auIndex * frameIntervalMs_);
+            auto now = std::chrono::system_clock::now();
+            int64_t absTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now.time_since_epoch()).count();
+
+            auto protocolFrames = FrameProtocol::EncodeVideoFrame(
+                payload, codec, frameType, timestampMs, absTimeMs, frameId_);
+
+            for (const auto& protoFrame : protocolFrames) {
+                auto wsFrame = WebSocket::EncodeFrame(WsOpcode::BINARY,
+                                                      protoFrame.data(), protoFrame.size());
+
+                int32_t sent = tlsServer_.SendData(conn.fd, wsFrame.data(), wsFrame.size());
                 if (sent > 0) {
                     conn.stats.messagesSent++;
-                    conn.stats.bytesSent += nal.data.size();
+                    conn.stats.bytesSent += protoFrame.size();
                 }
             }
 
             conn.auIndex++;
         }
+
+        frameId_++;
     }
 
     void Shutdown() {
@@ -306,6 +364,8 @@ private:
     ConnectionManager connManager_;
     uint16_t port_;
     bool isH265_;
+    uint16_t frameId_;
+    double frameIntervalMs_;
     std::string videoPath_;
     std::string certPath_;
     std::string keyPath_;

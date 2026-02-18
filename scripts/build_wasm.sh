@@ -73,7 +73,12 @@ EMFLAGS=(
         "_decoder_get_version",
         "_decoder_get_ffmpeg_version",
         "_decoder_malloc",
-        "_decoder_free"
+        "_decoder_free",
+        "_frame_protocol_init",
+        "_frame_protocol_parse",
+        "_frame_protocol_destroy",
+        "_frame_protocol_alloc_result",
+        "_frame_protocol_free_result"
     ]'
     -s EXPORTED_RUNTIME_METHODS='[
         "ccall",
@@ -95,6 +100,7 @@ echo "   Start time: $(date '+%H:%M:%S')"
 ${CC} \
     "${CFLAGS[@]}" \
     "${SRC_DIR}/decoder_wasm.c" \
+    "${SRC_DIR}/frame_protocol.c" \
     "${LDFLAGS[@]}" \
     "${EMFLAGS[@]}" \
     -o "${DIST_DIR}/decoder.js"

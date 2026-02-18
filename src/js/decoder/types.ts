@@ -25,6 +25,23 @@ export enum DecodeStatus {
   END_OF_STREAM = 2
 }
 
+export enum FrameParseStatus {
+  COMPLETE = 0,
+  FRAGMENT_PENDING = 1,
+  ERROR = -1,
+  SKIP = 2
+}
+
+export interface ParsedFrameInfo {
+  status: FrameParseStatus;
+  msgType: number;
+  codec: number;
+  frameType: number;
+  timestamp: number;
+  absTime: number;
+  payload: Uint8Array;
+}
+
 export interface DecoderStats {
   totalFrames: number;
   droppedFrames: number;

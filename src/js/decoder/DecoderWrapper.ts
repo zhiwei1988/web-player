@@ -1,17 +1,21 @@
 import {
-  DecodeStatus
+  DecodeStatus,
+  FrameParseStatus
 } from './types.js';
 
 import type {
   DecoderConfig,
   VideoFrame,
   DecoderStats,
+  ParsedFrameInfo,
   EmscriptenModule
 } from './types.js';
 
 export class DecoderWrapper {
   private module: EmscriptenModule | null = null;
   private initialized: boolean = false;
+  private protocolInitialized: boolean = false;
+  private parsedFramePtr: number = 0;
 
   private stats: DecoderStats = {
     totalFrames: 0,
@@ -279,8 +283,91 @@ export class DecoderWrapper {
     return frames;
   }
 
+  initProtocol(): void {
+    if (!this.module) {
+      throw new Error('Module not initialized');
+    }
+
+    const result = this.module.ccall('frame_protocol_init', 'number', [], []);
+    if (result < 0) {
+      throw new Error(`Failed to initialize frame protocol, error: ${result}`);
+    }
+
+    this.parsedFramePtr = this.module.ccall(
+      'frame_protocol_alloc_result', 'number', [], []);
+    if (!this.parsedFramePtr) {
+      throw new Error('Failed to allocate ParsedFrame struct');
+    }
+
+    this.protocolInitialized = true;
+  }
+
+  parseFrame(data: Uint8Array): ParsedFrameInfo | null {
+    if (!this.module || !this.protocolInitialized || !this.parsedFramePtr) {
+      throw new Error('Protocol not initialized');
+    }
+
+    const dataPtr = this.module.ccall(
+      'decoder_malloc', 'number', ['number'], [data.length]);
+    if (!dataPtr) {
+      throw new Error('Failed to allocate memory for protocol frame');
+    }
+
+    try {
+      this.module.HEAPU8.set(data, dataPtr);
+
+      const status: FrameParseStatus = this.module.ccall(
+        'frame_protocol_parse', 'number',
+        ['number', 'number', 'number'],
+        [dataPtr, data.length, this.parsedFramePtr]);
+
+      if (status === FrameParseStatus.FRAGMENT_PENDING) {
+        return { status, msgType: 0, codec: 0, frameType: 0,
+                 timestamp: 0, absTime: 0, payload: new Uint8Array(0) };
+      }
+
+      if (status === FrameParseStatus.ERROR || status === FrameParseStatus.SKIP) {
+        return { status, msgType: 0, codec: 0, frameType: 0,
+                 timestamp: 0, absTime: 0, payload: new Uint8Array(0) };
+      }
+
+      // FRAME_COMPLETE: read ParsedFrame fields from WASM memory
+      const ptr = this.parsedFramePtr;
+      const msgType = this.module.HEAPU8[ptr];
+      const codec = this.module.HEAPU8[ptr + 1];
+      const frameType = this.module.HEAPU8[ptr + 2];
+      const timestamp = this.readInt64AsNumber(ptr + 8);
+      const absTime = this.readInt64AsNumber(ptr + 16);
+      const payloadPtr = this.module.getValue(ptr + 24, 'i32');
+      const payloadSize = this.module.getValue(ptr + 28, 'i32') >>> 0;
+
+      let payload = new Uint8Array(0);
+      if (payloadPtr && payloadSize > 0) {
+        payload = new Uint8Array(payloadSize);
+        payload.set(this.module.HEAPU8.subarray(payloadPtr, payloadPtr + payloadSize));
+      }
+
+      return { status, msgType, codec, frameType, timestamp, absTime, payload };
+    } finally {
+      this.module.ccall('decoder_free', null, ['number'], [dataPtr]);
+    }
+  }
+
+  destroyProtocol(): void {
+    if (this.module && this.protocolInitialized) {
+      if (this.parsedFramePtr) {
+        this.module.ccall('frame_protocol_free_result', null,
+                          ['number'], [this.parsedFramePtr]);
+        this.parsedFramePtr = 0;
+      }
+      this.module.ccall('frame_protocol_destroy', null, [], []);
+      this.protocolInitialized = false;
+    }
+  }
+
   destroy(): void {
     if (this.initialized && this.module) {
+      this.destroyProtocol();
       this.module.ccall('decoder_destroy', null, [], []);
       this.initialized = false;
       this.module = null;
