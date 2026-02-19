@@ -79,10 +79,6 @@
 - 连接事件处理器
 - 更新 UI 状态
 
-#### index-single.html (保留原始版本)
-- 保留原始单流版本作为备份
-- 使用原始的 `app.js` 和 `decoder-init.js`
-
 ### 第五阶段：构建系统 ✅
 - 所有 TypeScript 代码编译成功
 - 生成的 JavaScript 模块位于 `dist/js/js/`
@@ -94,11 +90,6 @@
 ### 多流版本（新）
 ```
 http://192.168.50.101:8888/index.html
-```
-
-### 单流版本（原始）
-```
-http://192.168.50.101:8888/index-single.html
 ```
 
 ## 功能特性
@@ -196,12 +187,9 @@ src/js/
 │   ├── WorkerBridge.ts        # (现有) 主线程 ↔ Worker 桥接
 │   ├── DecoderWrapper.ts      # (现有) WASM 包装器
 │   └── types.ts               # (现有) 类型定义
-├── app-multi.js               # 多流应用
-├── app.js                     # (现有) 单流应用
-└── decoder-init.js            # (现有) 解码器初始化
+└── app-multi.js               # 多流应用
 
 index.html                     # 多流 UI
-index-single.html              # 原始单流 UI
 ```
 
 ## 优势
