@@ -18,3 +18,4 @@ build/
 *.log
 .emscripten_cache/
 .emscripten_ports/
+compile_commands.json
