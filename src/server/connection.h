@@ -39,7 +39,9 @@ struct Connection {
     std::string ip;
     ConnState state;
     ConnStats stats;
-    size_t auIndex;
+    size_t auIndex;        // for raw bitstream mode (NalParser)
+    size_t packetIndex;    // for MP4 mode (Mp4Demuxer)
+    double playbackTimeMs; // elapsed playback time in ms for MP4 mode
     std::vector<uint8_t> recvBuffer;
     std::chrono::steady_clock::time_point negotiateOfferTime;
 };

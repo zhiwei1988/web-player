@@ -23,6 +23,10 @@ typedef struct {
     int64_t  abs_time;        /* absolute UTC ms from common ext header */
     uint8_t* payload;         /* pointer to reassembled payload (WASM heap) */
     uint32_t payload_size;
+    /* audio ext header fields */
+    uint8_t  audio_codec;       /* AudioCodec: 1=G711A, 2=G711U, 3=G726, 4=AAC */
+    uint8_t  audio_sample_rate; /* SampleRateCode: 0=8000, 1=16000, 2=44100, 3=48000 */
+    uint8_t  audio_channels;    /* 1=mono, 2=stereo */
 } ParsedFrame;
 
 /**

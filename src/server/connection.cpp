@@ -10,7 +10,7 @@ ConnectionManager::ConnectionManager() : totalConnections_(0) {
 int32_t ConnectionManager::AddConnection(int32_t fd, const std::string& ip) {
     int32_t id = ++totalConnections_;
 
-    Connection conn;
+    Connection conn {};
     conn.fd = fd;
     conn.id = id;
     conn.ip = ip;

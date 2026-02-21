@@ -37,6 +37,9 @@ typedef struct {
     uint16_t video_resolution;
     int64_t  timestamp;
     int64_t  abs_time;
+    uint8_t  audio_codec;
+    uint8_t  audio_sample_rate;
+    uint8_t  audio_channels;
 
     uint8_t  active;
 } FragmentEntry;
@@ -156,7 +159,10 @@ static void parse_ext_headers(const uint8_t* ext_data, uint8_t ext_length,
                               int64_t* out_abs_time,
                               uint8_t* out_video_codec,
                               uint8_t* out_video_frame_type,
-                              uint16_t* out_video_resolution) {
+                              uint16_t* out_video_resolution,
+                              uint8_t* out_audio_codec,
+                              uint8_t* out_audio_sample_rate,
+                              uint8_t* out_audio_channels) {
     uint8_t offset = 0;
 
     /* Layer 1: Fragment ext header (6B) */
@@ -190,6 +196,11 @@ static void parse_ext_headers(const uint8_t* ext_data, uint8_t ext_length,
         *out_video_codec = ext_data[offset];
         *out_video_frame_type = ext_data[offset + 1];
         *out_video_resolution = read_be16(ext_data + offset + 2);
+    } else if (msg_type == 0x02 && offset + 4 <= ext_length) {
+        /* Audio ext header: codec(1) + sample_rate(1) + channels(1) + reserved(1) */
+        *out_audio_codec = ext_data[offset];
+        *out_audio_sample_rate = ext_data[offset + 1];
+        *out_audio_channels = ext_data[offset + 2];
     }
 }
 
@@ -253,11 +264,15 @@ FrameParseStatus frame_protocol_parse(const uint8_t* data, int size,
     uint8_t video_codec = 0;
     uint8_t video_frame_type = 0;
     uint16_t video_resolution = 0;
+    uint8_t audio_codec = 0;
+    uint8_t audio_sample_rate = 0;
+    uint8_t audio_channels = 0;
 
     parse_ext_headers(ext_data, ext_length, flags, msg_type,
                       &frame_id, &frag_index, &total_frags,
                       &abs_time, &video_codec, &video_frame_type,
-                      &video_resolution);
+                      &video_resolution,
+                      &audio_codec, &audio_sample_rate, &audio_channels);
 
     /* Non-fragmented frame */
     if (!(flags & FLAG_FRAGMENT)) {
@@ -273,6 +288,9 @@ FrameParseStatus frame_protocol_parse(const uint8_t* data, int size,
         result->video_codec = video_codec;
         result->video_frame_type = video_frame_type;
         result->video_resolution = video_resolution;
+        result->audio_codec = audio_codec;
+        result->audio_sample_rate = audio_sample_rate;
+        result->audio_channels = audio_channels;
         result->payload_size = payload_length;
 
         if (payload_length > 0) {
@@ -308,6 +326,9 @@ FrameParseStatus frame_protocol_parse(const uint8_t* data, int size,
         entry->video_codec = video_codec;
         entry->video_frame_type = video_frame_type;
         entry->video_resolution = video_resolution;
+        entry->audio_codec = audio_codec;
+        entry->audio_sample_rate = audio_sample_rate;
+        entry->audio_channels = audio_channels;
     }
 
     /* Store this fragment's payload */
@@ -344,6 +365,9 @@ FrameParseStatus frame_protocol_parse(const uint8_t* data, int size,
         result->video_codec = entry->video_codec;
         result->video_frame_type = entry->video_frame_type;
         result->video_resolution = entry->video_resolution;
+        result->audio_codec = entry->audio_codec;
+        result->audio_sample_rate = entry->audio_sample_rate;
+        result->audio_channels = entry->audio_channels;
         result->payload = reassembled;
         result->payload_size = reassembled_size;
 

@@ -43,6 +43,22 @@ enum class VideoCodec : uint8_t {
     MJPEG = 3
 };
 
+// Audio codec types (in audio ext header)
+enum class AudioCodec : uint8_t {
+    G711A = 1,
+    G711U = 2,
+    G726  = 3,
+    AAC   = 4
+};
+
+// Sample rate encoding (in audio ext header)
+enum class SampleRateCode : uint8_t {
+    RATE_8000  = 0,
+    RATE_16000 = 1,
+    RATE_44100 = 2,
+    RATE_48000 = 3
+};
+
 // Video frame types (in video ext header)
 enum class VideoFrameType : uint8_t {
     IDR     = 1,
@@ -75,6 +91,29 @@ public:
         int64_t absTimeMs,
         uint16_t frameId);
 
+    /**
+     * Encode audio data into one or more protocol frames.
+     *
+     * @param payload      encoded audio data
+     * @param codec        audio codec type
+     * @param sampleRate   sample rate code
+     * @param channels     number of channels
+     * @param timestampMs  relative timestamp in ms
+     * @param absTimeMs    absolute UTC timestamp in ms
+     * @param frameId      frame ID for fragmentation tracking
+     * @return vector of encoded protocol frames
+     */
+    static std::vector<std::vector<uint8_t>> EncodeAudioFrame(
+        const std::vector<uint8_t>& payload,
+        AudioCodec codec,
+        SampleRateCode sampleRate,
+        uint8_t channels,
+        int64_t timestampMs,
+        int64_t absTimeMs,
+        uint16_t frameId);
+
+    static SampleRateCode SampleRateToCode(int32_t sampleRate);
+
 private:
     static void WriteFixedHeader(std::vector<uint8_t>& buf,
                                  MsgType msgType,
@@ -89,6 +128,11 @@ private:
     static void WriteVideoExtHeader(std::vector<uint8_t>& buf,
                                     VideoCodec codec,
                                     VideoFrameType frameType);
+
+    static void WriteAudioExtHeader(std::vector<uint8_t>& buf,
+                                    AudioCodec codec,
+                                    SampleRateCode sampleRate,
+                                    uint8_t channels);
 
     static void WriteFragmentExtHeader(std::vector<uint8_t>& buf,
                                        uint16_t frameId,

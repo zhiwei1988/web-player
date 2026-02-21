@@ -10,6 +10,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MBEDTLS REQUIRED mbedtls mbedx509 mbedcrypto)
 
+# Find FFmpeg (libavformat, libavcodec, libavutil)
+pkg_check_modules(AVFORMAT REQUIRED libavformat)
+pkg_check_modules(AVCODEC REQUIRED libavcodec)
+pkg_check_modules(AVUTIL REQUIRED libavutil)
+
 # Source files
 set(SOURCES
     main.cpp
@@ -23,6 +28,7 @@ set(SOURCES
     tls_context.cpp
     tls_server.cpp
     frame_protocol.cpp
+    mp4_demuxer.cpp
 )
 
 # Executable
@@ -32,11 +38,17 @@ add_executable(video_server ${SOURCES})
 target_include_directories(video_server PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${MBEDTLS_INCLUDE_DIRS}
+    ${AVFORMAT_INCLUDE_DIRS}
+    ${AVCODEC_INCLUDE_DIRS}
+    ${AVUTIL_INCLUDE_DIRS}
 )
 
 # Link libraries
 target_link_libraries(video_server
     ${MBEDTLS_LIBRARIES}
+    ${AVFORMAT_LIBRARIES}
+    ${AVCODEC_LIBRARIES}
+    ${AVUTIL_LIBRARIES}
     pthread
 )
 

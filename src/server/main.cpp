@@ -1,12 +1,18 @@
 #include <csignal>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
+#include <algorithm>
 #include <chrono>
+#include <ostream>
+#include <string>
+#include <iostream>
 
 #include "connection.h"
 #include "frame_protocol.h"
+#include "mp4_demuxer.h"
 #include "nal_parser.h"
 #include "tls_server.h"
 #include "timer.h"
@@ -23,11 +29,25 @@ static void SignalHandler(int sig) {
     gRunning = false;
 }
 
+static bool HasSuffix(const std::string& str, const std::string& suffix) {
+    if (suffix.size() > str.size()) return false;
+    return std::equal(suffix.rbegin(), suffix.rend(), str.rbegin());
+}
+
+static AudioCodec AudioCodecNameToEnum(const std::string& name) {
+    if (name == "pcm_alaw") return AudioCodec::G711A;
+    if (name == "pcm_mulaw") return AudioCodec::G711U;
+    if (name == "g726") return AudioCodec::G726;
+    if (name == "aac") return AudioCodec::AAC;
+    return AudioCodec::AAC;
+}
+
 class VideoServer {
 public:
     VideoServer()
         : port_(DEFAULT_PORT),
           isH265_(false),
+          isMp4Mode_(false),
           frameId_(0),
           frameIntervalMs_(40.0),
           certPath_(""),
@@ -37,25 +57,40 @@ public:
     bool Initialize(int32_t argc, char* argv[]) {
         ParseArgs(argc, argv);
 
-        std::printf("Codec type: %s\n", isH265_ ? "H.265/HEVC" : "H.264/AVC");
-        std::printf("Video file: %s\n", videoPath_.c_str());
+        isMp4Mode_ = HasSuffix(videoPath_, ".mp4");
 
-        if (!nalParser_.LoadFile(videoPath_, isH265_)) {
-            return false;
+        std::printf("Input file: %s (%s mode)\n",
+                    videoPath_.c_str(), isMp4Mode_ ? "MP4" : "raw bitstream");
+
+        if (isMp4Mode_) {
+            if (!mp4Demuxer_.LoadFile(videoPath_)) {
+                return false;
+            }
+            isH265_ = mp4Demuxer_.GetVideoInfo().isH265;
+            double fps = mp4Demuxer_.GetFrameRate();
+            frameIntervalMs_ = 1000.0 / fps;
+        } else {
+            std::printf("Codec type: %s\n", isH265_ ? "H.265/HEVC" : "H.264/AVC");
+            if (!nalParser_.LoadFile(videoPath_, isH265_)) {
+                return false;
+            }
+            double fps = nalParser_.GetFrameRate();
+            frameIntervalMs_ = 1000.0 / fps;
         }
 
         if (!tlsServer_.Start(port_, certPath_, keyPath_)) {
             return false;
         }
 
-        // Calculate timer interval from detected frame rate
-        double fps = nalParser_.GetFrameRate();
-        frameIntervalMs_ = 1000.0 / fps;
-        uint32_t intervalMs = static_cast<uint32_t>(frameIntervalMs_);
+        // For MP4 mode, use a fine-grained base timer (10ms)
+        // For raw mode, use frame interval as before
+        uint32_t timerIntervalMs = isMp4Mode_
+            ? 10
+            : static_cast<uint32_t>(frameIntervalMs_);
 
-        std::printf("Send interval: %u ms (%.2f fps)\n", intervalMs, fps);
+        std::printf("Timer interval: %u ms\n", timerIntervalMs);
 
-        if (!timer_.Start(intervalMs)) {
+        if (!timer_.Start(timerIntervalMs)) {
             return false;
         }
 
@@ -132,7 +167,7 @@ private:
         std::printf("Options:\n");
         std::printf("  -p <port>      Port number (default: %u)\n", DEFAULT_PORT);
         std::printf("  -c <codec>     Codec type: h264, h265 (default: h264)\n");
-        std::printf("  -f <file>      Video file path\n");
+        std::printf("  -f <file>      Media file path (.mp4, .h264, .h265)\n");
         std::printf("  --cert <file>  TLS certificate file (PEM format)\n");
         std::printf("  --key <file>   TLS private key file (PEM format)\n");
         std::printf("  -h             Show this help\n");
@@ -256,12 +291,28 @@ private:
     }
 
     std::string BuildMediaOffer() const {
-        const char* codecStr = isH265_ ? "h265" : "h264";
+        const char* videoCodecStr = isH265_ ? "h265" : "h264";
         double fps = 1000.0 / frameIntervalMs_;
-        char buf[256];
-        std::snprintf(buf, sizeof(buf),
-            "{\"type\":\"media-offer\",\"payload\":{\"version\":1,\"streams\":[{\"type\":\"video\",\"codec\":\"%s\",\"framerate\":%.2f}]}}",
-            codecStr, fps);
+
+        char buf[512];
+
+        if (isMp4Mode_ && mp4Demuxer_.GetAudioInfo().present) {
+            const AudioInfo& audio = mp4Demuxer_.GetAudioInfo();
+            std::snprintf(buf, sizeof(buf),
+                "{\"type\":\"media-offer\",\"payload\":{\"version\":1,\"streams\":["
+                "{\"type\":\"video\",\"codec\":\"%s\",\"framerate\":%.2f},"
+                "{\"type\":\"audio\",\"codec\":\"%s\",\"sampleRate\":%d,\"channels\":%d}"
+                "]}}",
+                videoCodecStr, fps,
+                audio.codecName.c_str(), audio.sampleRate, audio.channels);
+        } else {
+            std::snprintf(buf, sizeof(buf),
+                "{\"type\":\"media-offer\",\"payload\":{\"version\":1,\"streams\":["
+                "{\"type\":\"video\",\"codec\":\"%s\",\"framerate\":%.2f}"
+                "]}}",
+                videoCodecStr, fps);
+        }
+
         return std::string(buf);
     }
 
@@ -358,6 +409,162 @@ private:
         return VideoFrameType::P_FRAME;
     }
 
+    // Detect video frame type from raw MP4 packet data (Annex B or AVCC)
+    VideoFrameType DetectFrameTypeFromPacket(const std::vector<uint8_t>& data) {
+        if (data.size() < 5) return VideoFrameType::P_FRAME;
+
+        // Try Annex B start code
+        size_t offset = 0;
+        if (data[0] == 0 && data[1] == 0) {
+            if (data[2] == 0 && data[3] == 1) {
+                offset = 4;
+            } else if (data[2] == 1) {
+                offset = 3;
+            }
+        }
+
+        // AVCC length-prefixed (4-byte length)
+        if (offset == 0 && data.size() >= 5) {
+            offset = 4;
+        }
+
+        if (offset >= data.size()) return VideoFrameType::P_FRAME;
+
+        if (isH265_) {
+            uint8_t nalType = (data[offset] >> 1) & 0x3F;
+            if (nalType == 32) return VideoFrameType::VPS;
+            if (nalType == 33 || nalType == 34) return VideoFrameType::SPS_PPS;
+            if (nalType == 19 || nalType == 20) return VideoFrameType::IDR;
+            if (nalType >= 16 && nalType <= 23) return VideoFrameType::I_FRAME;
+        } else {
+            uint8_t nalType = data[offset] & 0x1F;
+            if (nalType == 7 || nalType == 8) return VideoFrameType::SPS_PPS;
+            if (nalType == 5) return VideoFrameType::IDR;
+        }
+        return VideoFrameType::P_FRAME;
+    }
+
+    void SendPacket(Connection& conn, const MediaPacket& pkt) {
+        auto now = std::chrono::system_clock::now();
+        int64_t absTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count();
+
+        std::vector<std::vector<uint8_t>> protocolFrames;
+
+        if (pkt.type == MediaType::VIDEO) {
+            VideoCodec codec = isH265_ ? VideoCodec::H265 : VideoCodec::H264;
+            VideoFrameType frameType = DetectFrameTypeFromPacket(pkt.data);
+
+            protocolFrames = FrameProtocol::EncodeVideoFrame(
+                pkt.data, codec, frameType, pkt.ptsMs, absTimeMs, frameId_);
+        } else {
+            const AudioInfo& audio = mp4Demuxer_.GetAudioInfo();
+            AudioCodec audioCodec = AudioCodecNameToEnum(audio.codecName);
+            SampleRateCode rateCode = FrameProtocol::SampleRateToCode(audio.sampleRate);
+            uint8_t channels = static_cast<uint8_t>(audio.channels);
+
+            protocolFrames = FrameProtocol::EncodeAudioFrame(
+                pkt.data, audioCodec, rateCode, channels,
+                pkt.ptsMs, absTimeMs, frameId_);
+        }
+
+        for (const auto& protoFrame : protocolFrames) {
+            auto wsFrame = WebSocket::EncodeFrame(WsOpcode::BINARY,
+                                                  protoFrame.data(), protoFrame.size());
+            int32_t sent = tlsServer_.SendData(conn.fd, wsFrame.data(), wsFrame.size());
+            if (sent > 0) {
+                conn.stats.messagesSent++;
+                conn.stats.bytesSent += protoFrame.size();
+            }
+        }
+
+        frameId_++;
+    }
+
+    void OnTimerMp4(Connection& conn) {
+        size_t packetCount = mp4Demuxer_.GetPacketCount();
+        if (packetCount == 0) return;
+
+        // Get the first packet's PTS as base for cyclic playback
+        const MediaPacket* firstPkt = mp4Demuxer_.GetPacket(0);
+        const MediaPacket* lastPkt = mp4Demuxer_.GetPacket(packetCount - 1);
+        int64_t totalDurationMs = lastPkt->ptsMs - firstPkt->ptsMs;
+        if (totalDurationMs <= 0) totalDurationMs = 1;
+
+        // std::cout << "packetCount " << packetCount << " totalDurationMs " << totalDurationMs << std::endl;
+
+        // Send all packets whose PTS <= current playback time
+        while (true) {
+            size_t idx = conn.packetIndex % packetCount;
+            const MediaPacket* pkt = mp4Demuxer_.GetPacket(idx);
+            if (pkt == nullptr) {
+                break;
+            }
+
+            // Calculate effective PTS considering cyclic loops
+            size_t loopCount = conn.packetIndex / packetCount;
+            double effectivePtsMs = pkt->ptsMs - firstPkt->ptsMs
+                                    + loopCount * totalDurationMs;
+
+            if (effectivePtsMs > conn.playbackTimeMs) {
+                // std::cerr << "packetIndex " << conn.packetIndex << " loopCount " << loopCount << std::endl;
+                // std::cerr << "pkt pts " << pkt->ptsMs << " first pts " << firstPkt->ptsMs << std::endl;
+                break;
+            }
+
+            SendPacket(conn, *pkt);
+            conn.packetIndex++;
+        }
+
+        // Advance playback clock by timer interval (10ms)
+        conn.playbackTimeMs += 10.0;
+    }
+
+    void OnTimerRaw(Connection& conn) {
+        if (nalParser_.GetAccessUnitCount() == 0) return;
+
+        size_t auIndex = conn.auIndex % nalParser_.GetAccessUnitCount();
+        const AccessUnit* au = nalParser_.GetAccessUnit(auIndex);
+        if (au == nullptr) return;
+
+        // Log every 25 Access Units
+        if (auIndex % 25 == 0) {
+            std::printf("[Connection #%d] Sending AU %zu/%zu (%zu NAL units)\n",
+                        conn.id, auIndex, nalParser_.GetAccessUnitCount(), au->nalUnits.size());
+        }
+
+        // Merge all NAL units into a single payload
+        std::vector<uint8_t> payload;
+        for (const auto& nal : au->nalUnits) {
+            payload.insert(payload.end(), nal.data.begin(), nal.data.end());
+        }
+
+        VideoCodec codec = isH265_ ? VideoCodec::H265 : VideoCodec::H264;
+        VideoFrameType frameType = DetectFrameType(*au);
+
+        int64_t timestampMs = static_cast<int64_t>(conn.auIndex * frameIntervalMs_);
+        auto now = std::chrono::system_clock::now();
+        int64_t absTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count();
+
+        auto protocolFrames = FrameProtocol::EncodeVideoFrame(
+            payload, codec, frameType, timestampMs, absTimeMs, frameId_);
+
+        for (const auto& protoFrame : protocolFrames) {
+            auto wsFrame = WebSocket::EncodeFrame(WsOpcode::BINARY,
+                                                  protoFrame.data(), protoFrame.size());
+
+            int32_t sent = tlsServer_.SendData(conn.fd, wsFrame.data(), wsFrame.size());
+            if (sent > 0) {
+                conn.stats.messagesSent++;
+                conn.stats.bytesSent += protoFrame.size();
+            }
+        }
+
+        conn.auIndex++;
+        frameId_++;
+    }
+
     void OnTimer() {
         timer_.Read();
 
@@ -383,59 +590,16 @@ private:
                 continue;
             }
 
-            if (nalParser_.GetAccessUnitCount() == 0) {
-                continue;
+            if (isMp4Mode_) {
+                OnTimerMp4(conn);
+            } else {
+                OnTimerRaw(conn);
             }
-
-            size_t auIndex = conn.auIndex % nalParser_.GetAccessUnitCount();
-            const AccessUnit* au = nalParser_.GetAccessUnit(auIndex);
-
-            if (au == nullptr) {
-                continue;
-            }
-
-            // Log every 25 Access Units
-            if (auIndex % 25 == 0) {
-                std::printf("[Connection #%d] Sending AU %zu/%zu (%zu NAL units)\n",
-                            conn.id, auIndex, nalParser_.GetAccessUnitCount(), au->nalUnits.size());
-            }
-
-            // Merge all NAL units into a single payload
-            std::vector<uint8_t> payload;
-            for (const auto& nal : au->nalUnits) {
-                payload.insert(payload.end(), nal.data.begin(), nal.data.end());
-            }
-
-            VideoCodec codec = isH265_ ? VideoCodec::H265 : VideoCodec::H264;
-            VideoFrameType frameType = DetectFrameType(*au);
-
-            int64_t timestampMs = static_cast<int64_t>(conn.auIndex * frameIntervalMs_);
-            auto now = std::chrono::system_clock::now();
-            int64_t absTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                now.time_since_epoch()).count();
-
-            auto protocolFrames = FrameProtocol::EncodeVideoFrame(
-                payload, codec, frameType, timestampMs, absTimeMs, frameId_);
-
-            for (const auto& protoFrame : protocolFrames) {
-                auto wsFrame = WebSocket::EncodeFrame(WsOpcode::BINARY,
-                                                      protoFrame.data(), protoFrame.size());
-
-                int32_t sent = tlsServer_.SendData(conn.fd, wsFrame.data(), wsFrame.size());
-                if (sent > 0) {
-                    conn.stats.messagesSent++;
-                    conn.stats.bytesSent += protoFrame.size();
-                }
-            }
-
-            conn.auIndex++;
         }
 
         for (int32_t fd : negotiationTimeouts) {
             tlsServer_.CloseConnection(fd);
         }
-
-        frameId_++;
     }
 
     void Shutdown() {
@@ -456,9 +620,11 @@ private:
     TlsServer tlsServer_;
     Timer timer_;
     NalParser nalParser_;
+    Mp4Demuxer mp4Demuxer_;
     ConnectionManager connManager_;
     uint16_t port_;
     bool isH265_;
+    bool isMp4Mode_;
     uint16_t frameId_;
     double frameIntervalMs_;
     std::string videoPath_;

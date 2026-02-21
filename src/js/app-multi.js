@@ -27,12 +27,14 @@ function addStream() {
         onConnect: async (wsUrl) => {
             try {
                 const canvas = card.getCanvas();
+                const audioContext = new AudioContext();
 
                 const stream = streamManager.createStream({
                     id: streamId,
                     wsUrl: wsUrl,
                     canvas: canvas,
-                    wasmPath: '/dist/decoder.js'
+                    wasmPath: '/dist/decoder.js',
+                    audioContext: audioContext,
                 });
 
                 stream.setOnStatusChange((status) => {
@@ -70,7 +72,7 @@ function addStream() {
             gridLayout.removeCard(streamId);
             updateStreamCount();
             console.log(`Stream ${streamId} removed`);
-        }
+        },
     });
 
     gridLayout.addCard(card);

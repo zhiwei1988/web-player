@@ -48,7 +48,7 @@ make distclean 2>/dev/null || true
 # FFmpeg configuration
 # ===========================
 echo ""
-echo "Configuring FFmpeg (M1: minimal H.264 decoder)..."
+echo "Configuring FFmpeg (H.264/H.265 video + audio decoders)..."
 
 export CFLAGS="-O3 -fno-exceptions"
 export LDFLAGS="-O3"
@@ -77,7 +77,7 @@ emconfigure ./configure \
     \
     --disable-avdevice \
     --disable-swscale \
-    --disable-swresample \
+    --enable-swresample \
     --disable-postproc \
     --disable-avfilter \
     --disable-network \
@@ -105,8 +105,13 @@ emconfigure ./configure \
     \
     --enable-decoder=h264 \
     --enable-decoder=hevc \
+    --enable-decoder=pcm_alaw \
+    --enable-decoder=pcm_mulaw \
+    --enable-decoder=adpcm_g726 \
+    --enable-decoder=aac \
     --enable-parser=h264 \
     --enable-parser=hevc \
+    --enable-parser=aac \
     --enable-protocol=file \
     \
     --extra-cflags="${CFLAGS}" \
@@ -135,7 +140,7 @@ echo "FFmpeg installation completed: ${INSTALL_DIR}"
 # ===========================
 echo ""
 echo "Verifying build artifacts..."
-REQUIRED_LIBS=("lib/libavcodec.a" "lib/libavformat.a" "lib/libavutil.a")
+REQUIRED_LIBS=("lib/libavcodec.a" "lib/libavformat.a" "lib/libavutil.a" "lib/libswresample.a")
 ALL_OK=true
 
 for lib in "${REQUIRED_LIBS[@]}"; do

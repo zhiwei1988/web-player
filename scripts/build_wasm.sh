@@ -44,6 +44,7 @@ LDFLAGS=(
     -L"${FFMPEG_DIR}/lib"
     -lavformat
     -lavcodec
+    -lswresample
     -lavutil
     -pthread
 )
@@ -69,6 +70,10 @@ EMFLAGS=(
         "_decoder_send_video_packet",
         "_decoder_receive_video_frame",
         "_decoder_flush_video",
+        "_decoder_init_audio",
+        "_decoder_send_audio_packet",
+        "_decoder_receive_audio_frame",
+        "_decoder_flush_audio",
         "_decoder_destroy",
         "_decoder_get_version",
         "_decoder_get_ffmpeg_version",

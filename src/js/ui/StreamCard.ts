@@ -1,37 +1,37 @@
 import type { StreamStats, StreamStatus } from '../stream/StreamInstance.js';
 
 export interface StreamCardConfig {
-  id: string;
-  onConnect?: (wsUrl: string) => void;
-  onDisconnect?: () => void;
-  onRemove?: () => void;
+    id: string;
+    onConnect?: (wsUrl: string) => void;
+    onDisconnect?: () => void;
+    onRemove?: () => void;
 }
 
 export class StreamCard {
-  readonly id: string;
-  private container: HTMLElement;
-  private canvas: HTMLCanvasElement;
-  private statusIndicator: HTMLElement;
-  private statsPanel: HTMLElement;
-  private fpsOverlay: HTMLElement;
-  private statsCollapsed: boolean = true;
+    readonly id: string;
+    private container: HTMLElement;
+    private canvas: HTMLCanvasElement;
+    private statusIndicator: HTMLElement;
+    private statsPanel: HTMLElement;
+    private fpsOverlay: HTMLElement;
+    private statsCollapsed: boolean = true;
 
-  private config: StreamCardConfig;
+    private config: StreamCardConfig;
 
-  constructor(config: StreamCardConfig) {
-    this.id = config.id;
-    this.config = config;
-    this.container = this.createContainer();
-    this.canvas = this.container.querySelector('.stream-canvas') as HTMLCanvasElement;
-    this.statusIndicator = this.container.querySelector('.status-indicator') as HTMLElement;
-    this.statsPanel = this.container.querySelector('.stats-content') as HTMLElement;
-    this.fpsOverlay = this.container.querySelector('.fps-overlay') as HTMLElement;
-  }
+    constructor(config: StreamCardConfig) {
+        this.id = config.id;
+        this.config = config;
+        this.container = this.createContainer();
+        this.canvas = this.container.querySelector('.stream-canvas') as HTMLCanvasElement;
+        this.statusIndicator = this.container.querySelector('.status-indicator') as HTMLElement;
+        this.statsPanel = this.container.querySelector('.stats-content') as HTMLElement;
+        this.fpsOverlay = this.container.querySelector('.fps-overlay') as HTMLElement;
+    }
 
-  private createContainer(): HTMLElement {
-    const card = document.createElement('div');
-    card.className = 'stream-card bg-white rounded-lg shadow-md overflow-hidden';
-    card.innerHTML = `
+    private createContainer(): HTMLElement {
+        const card = document.createElement('div');
+        card.className = 'stream-card bg-white rounded-lg shadow-md overflow-hidden';
+        card.innerHTML = `
       <div class="stream-header p-3 bg-gray-100 border-b flex justify-between items-center">
         <div class="flex items-center gap-2">
           <span class="status-indicator w-3 h-3 rounded-full bg-gray-400"></span>
@@ -101,126 +101,126 @@ export class StreamCard {
       </div>
     `;
 
-    this.attachEventListeners(card);
-    return card;
-  }
-
-  private attachEventListeners(card: HTMLElement): void {
-    const connectBtn = card.querySelector('.connect-btn') as HTMLButtonElement;
-    const disconnectBtn = card.querySelector('.disconnect-btn') as HTMLButtonElement;
-    const removeBtn = card.querySelector('.remove-btn') as HTMLButtonElement;
-    const statsHeader = card.querySelector('.stats-header') as HTMLElement;
-
-    connectBtn.addEventListener('click', () => {
-      const wsUrl = (card.querySelector('.ws-url') as HTMLInputElement).value;
-      if (this.config.onConnect) {
-        this.config.onConnect(wsUrl);
-      }
-    });
-
-    disconnectBtn.addEventListener('click', () => {
-      if (this.config.onDisconnect) {
-        this.config.onDisconnect();
-      }
-    });
-
-    removeBtn.addEventListener('click', () => {
-      if (this.config.onRemove) {
-        this.config.onRemove();
-      }
-    });
-
-    statsHeader.addEventListener('click', () => {
-      this.toggleStats();
-    });
-  }
-
-  private toggleStats(): void {
-    this.statsCollapsed = !this.statsCollapsed;
-    const toggleIcon = this.container.querySelector('.toggle-icon') as HTMLElement;
-
-    if (this.statsCollapsed) {
-      this.statsPanel.classList.add('hidden');
-      toggleIcon.textContent = '▼';
-    } else {
-      this.statsPanel.classList.remove('hidden');
-      toggleIcon.textContent = '▲';
-    }
-  }
-
-  updateStatus(status: StreamStatus): void {
-    const overlay = this.container.querySelector('.stream-overlay') as HTMLElement;
-
-    switch (status) {
-      case 'disconnected':
-        this.statusIndicator.className = 'status-indicator w-3 h-3 rounded-full bg-gray-400';
-        overlay.textContent = 'Disconnected';
-        overlay.classList.remove('hidden');
-        this.fpsOverlay.classList.add('hidden');
-        break;
-      case 'connecting':
-        this.statusIndicator.className = 'status-indicator w-3 h-3 rounded-full bg-yellow-400';
-        overlay.textContent = 'Connecting...';
-        overlay.classList.remove('hidden');
-        this.fpsOverlay.classList.add('hidden');
-        break;
-      case 'connected':
-        this.statusIndicator.className = 'status-indicator w-3 h-3 rounded-full bg-green-500';
-        overlay.classList.add('hidden');
-        this.fpsOverlay.classList.remove('hidden');
-        break;
-      case 'error':
-        this.statusIndicator.className = 'status-indicator w-3 h-3 rounded-full bg-red-500';
-        overlay.textContent = 'Error';
-        overlay.classList.remove('hidden');
-        this.fpsOverlay.classList.add('hidden');
-        break;
-    }
-  }
-
-  updateStats(stats: StreamStats): void {
-    const dataRateEl = this.container.querySelector('.stat-data-rate') as HTMLElement;
-    const messagesEl = this.container.querySelector('.stat-messages') as HTMLElement;
-    const bytesEl = this.container.querySelector('.stat-bytes') as HTMLElement;
-    const bufferEl = this.container.querySelector('.stat-buffer') as HTMLElement;
-    const fpsEl = this.container.querySelector('.stat-fps') as HTMLElement;
-
-    dataRateEl.textContent = `${stats.dataRate.toFixed(2)} KB/s`;
-    messagesEl.textContent = stats.messagesReceived.toString();
-    bytesEl.textContent = this.formatBytes(stats.bytesReceived);
-
-    if (stats.bufferStats) {
-      bufferEl.textContent = `${stats.bufferStats.currentSize}/${stats.bufferStats.maxSize}`;
+        this.attachEventListeners(card);
+        return card;
     }
 
-    if (stats.decoderStats) {
-      fpsEl.textContent = stats.decoderStats.currentFPS.toFixed(1);
-      this.fpsOverlay.textContent = `${stats.decoderStats.currentFPS.toFixed(1)} FPS`;
-    } else {
-      this.fpsOverlay.textContent = '0.0 FPS';
+    private attachEventListeners(card: HTMLElement): void {
+        const connectBtn = card.querySelector('.connect-btn') as HTMLButtonElement;
+        const disconnectBtn = card.querySelector('.disconnect-btn') as HTMLButtonElement;
+        const removeBtn = card.querySelector('.remove-btn') as HTMLButtonElement;
+        const statsHeader = card.querySelector('.stats-header') as HTMLElement;
+
+        connectBtn.addEventListener('click', () => {
+            const wsUrl = (card.querySelector('.ws-url') as HTMLInputElement).value;
+            if (this.config.onConnect) {
+                this.config.onConnect(wsUrl);
+            }
+        });
+
+        disconnectBtn.addEventListener('click', () => {
+            if (this.config.onDisconnect) {
+                this.config.onDisconnect();
+            }
+        });
+
+        removeBtn.addEventListener('click', () => {
+            if (this.config.onRemove) {
+                this.config.onRemove();
+            }
+        });
+
+        statsHeader.addEventListener('click', () => {
+            this.toggleStats();
+        });
     }
-  }
 
-  setResolution(width: number, height: number): void {
-    const el = this.container.querySelector('.stat-resolution') as HTMLElement;
-    el.textContent = `${width}x${height}`;
-  }
+    private toggleStats(): void {
+        this.statsCollapsed = !this.statsCollapsed;
+        const toggleIcon = this.container.querySelector('.toggle-icon') as HTMLElement;
 
-  private formatBytes(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
-  }
+        if (this.statsCollapsed) {
+            this.statsPanel.classList.add('hidden');
+            toggleIcon.textContent = '▼';
+        } else {
+            this.statsPanel.classList.remove('hidden');
+            toggleIcon.textContent = '▲';
+        }
+    }
 
-  getCanvas(): HTMLCanvasElement {
-    return this.canvas;
-  }
+    updateStatus(status: StreamStatus): void {
+        const overlay = this.container.querySelector('.stream-overlay') as HTMLElement;
 
-  getElement(): HTMLElement {
-    return this.container;
-  }
+        switch (status) {
+            case 'disconnected':
+                this.statusIndicator.className = 'status-indicator w-3 h-3 rounded-full bg-gray-400';
+                overlay.textContent = 'Disconnected';
+                overlay.classList.remove('hidden');
+                this.fpsOverlay.classList.add('hidden');
+                break;
+            case 'connecting':
+                this.statusIndicator.className = 'status-indicator w-3 h-3 rounded-full bg-yellow-400';
+                overlay.textContent = 'Connecting...';
+                overlay.classList.remove('hidden');
+                this.fpsOverlay.classList.add('hidden');
+                break;
+            case 'connected':
+                this.statusIndicator.className = 'status-indicator w-3 h-3 rounded-full bg-green-500';
+                overlay.classList.add('hidden');
+                this.fpsOverlay.classList.remove('hidden');
+                break;
+            case 'error':
+                this.statusIndicator.className = 'status-indicator w-3 h-3 rounded-full bg-red-500';
+                overlay.textContent = 'Error';
+                overlay.classList.remove('hidden');
+                this.fpsOverlay.classList.add('hidden');
+                break;
+        }
+    }
 
-  destroy(): void {
-    this.container.remove();
-  }
+    updateStats(stats: StreamStats): void {
+        const dataRateEl = this.container.querySelector('.stat-data-rate') as HTMLElement;
+        const messagesEl = this.container.querySelector('.stat-messages') as HTMLElement;
+        const bytesEl = this.container.querySelector('.stat-bytes') as HTMLElement;
+        const bufferEl = this.container.querySelector('.stat-buffer') as HTMLElement;
+        const fpsEl = this.container.querySelector('.stat-fps') as HTMLElement;
+
+        dataRateEl.textContent = `${stats.dataRate.toFixed(2)} KB/s`;
+        messagesEl.textContent = stats.messagesReceived.toString();
+        bytesEl.textContent = this.formatBytes(stats.bytesReceived);
+
+        if (stats.bufferStats) {
+            bufferEl.textContent = `${stats.bufferStats.currentSize}/${stats.bufferStats.maxSize}`;
+        }
+
+        if (stats.decoderStats) {
+            fpsEl.textContent = stats.decoderStats.currentFPS.toFixed(1);
+            this.fpsOverlay.textContent = `${stats.decoderStats.currentFPS.toFixed(1)} FPS`;
+        } else {
+            this.fpsOverlay.textContent = '0.0 FPS';
+        }
+    }
+
+    setResolution(width: number, height: number): void {
+        const el = this.container.querySelector('.stat-resolution') as HTMLElement;
+        el.textContent = `${width}x${height}`;
+    }
+
+    private formatBytes(bytes: number): string {
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+    }
+
+    getCanvas(): HTMLCanvasElement {
+        return this.canvas;
+    }
+
+    getElement(): HTMLElement {
+        return this.container;
+    }
+
+    destroy(): void {
+        this.container.remove();
+    }
 }

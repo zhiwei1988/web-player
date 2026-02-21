@@ -155,4 +155,97 @@ std::vector<std::vector<uint8_t>> FrameProtocol::EncodeVideoFrame(
     return frames;
 }
 
+void FrameProtocol::WriteAudioExtHeader(std::vector<uint8_t>& buf,
+                                        AudioCodec codec,
+                                        SampleRateCode sampleRate,
+                                        uint8_t channels) {
+    buf.push_back(static_cast<uint8_t>(codec));
+    buf.push_back(static_cast<uint8_t>(sampleRate));
+    buf.push_back(channels);
+    buf.push_back(0);  // reserved
+}
+
+SampleRateCode FrameProtocol::SampleRateToCode(int32_t sampleRate) {
+    switch (sampleRate) {
+        case 8000:  return SampleRateCode::RATE_8000;
+        case 16000: return SampleRateCode::RATE_16000;
+        case 44100: return SampleRateCode::RATE_44100;
+        case 48000: return SampleRateCode::RATE_48000;
+        default:    return SampleRateCode::RATE_8000;
+    }
+}
+
+std::vector<std::vector<uint8_t>> FrameProtocol::EncodeAudioFrame(
+    const std::vector<uint8_t>& payload,
+    AudioCodec codec,
+    SampleRateCode sampleRate,
+    uint8_t channels,
+    int64_t timestampMs,
+    int64_t absTimeMs,
+    uint16_t frameId) {
+
+    std::vector<std::vector<uint8_t>> frames;
+
+    const uint8_t kCommonExtSize = 10;
+    const uint8_t kAudioExtSize = 4;   // codec(1) + sample_rate(1) + channels(1) + reserved(1)
+    const uint8_t kFragExtSize = 6;
+
+    if (payload.size() <= FRAGMENT_THRESHOLD) {
+        uint8_t extLength = kCommonExtSize + kAudioExtSize;
+        uint8_t flags = FLAG_HAS_COMMON;
+
+        std::vector<uint8_t> frame;
+        frame.reserve(FIXED_HEADER_SIZE + extLength + payload.size());
+
+        WriteFixedHeader(frame, MsgType::AUDIO, flags, timestampMs,
+                         extLength, static_cast<uint32_t>(payload.size()));
+        WriteCommonExtHeader(frame, absTimeMs);
+        WriteAudioExtHeader(frame, codec, sampleRate, channels);
+        frame.insert(frame.end(), payload.begin(), payload.end());
+
+        frames.push_back(std::move(frame));
+    } else {
+        uint16_t totalFragments = static_cast<uint16_t>(
+            (payload.size() + FRAGMENT_THRESHOLD - 1) / FRAGMENT_THRESHOLD);
+
+        for (uint16_t i = 0; i < totalFragments; ++i) {
+            size_t offset = static_cast<size_t>(i) * FRAGMENT_THRESHOLD;
+            size_t chunkSize = payload.size() - offset;
+            if (chunkSize > FRAGMENT_THRESHOLD) {
+                chunkSize = FRAGMENT_THRESHOLD;
+            }
+
+            std::vector<uint8_t> frame;
+            uint8_t flags = FLAG_FRAGMENT;
+            uint8_t extLength;
+
+            if (i == 0) {
+                extLength = kFragExtSize + kCommonExtSize + kAudioExtSize;
+                flags |= FLAG_HAS_COMMON;
+
+                frame.reserve(FIXED_HEADER_SIZE + extLength + chunkSize);
+                WriteFixedHeader(frame, MsgType::AUDIO, flags, timestampMs,
+                                 extLength, static_cast<uint32_t>(chunkSize));
+                WriteFragmentExtHeader(frame, frameId, i, totalFragments);
+                WriteCommonExtHeader(frame, absTimeMs);
+                WriteAudioExtHeader(frame, codec, sampleRate, channels);
+            } else {
+                extLength = kFragExtSize;
+
+                frame.reserve(FIXED_HEADER_SIZE + extLength + chunkSize);
+                WriteFixedHeader(frame, MsgType::AUDIO, flags, timestampMs,
+                                 extLength, static_cast<uint32_t>(chunkSize));
+                WriteFragmentExtHeader(frame, frameId, i, totalFragments);
+            }
+
+            frame.insert(frame.end(), payload.begin() + offset,
+                         payload.begin() + offset + chunkSize);
+
+            frames.push_back(std::move(frame));
+        }
+    }
+
+    return frames;
+}
+
 }  // namespace server

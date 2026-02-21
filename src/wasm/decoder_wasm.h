@@ -12,13 +12,19 @@
 extern "C" {
 #endif
 
-/* Codec type enumeration */
+/* Video codec type enumeration */
 typedef enum {
     CODEC_H264 = 0,
-    CODEC_H265 = 1,  // M2 stage
-    CODEC_AAC  = 2,  // M2 stage
-    CODEC_OPUS = 3   // M2 stage
+    CODEC_H265 = 1
 } CodecType;
+
+/* Audio codec type enumeration */
+typedef enum {
+    CODEC_G711A = 10,
+    CODEC_G711U = 11,
+    CODEC_G726  = 12,
+    CODEC_AAC   = 13
+} AudioCodecType;
 
 /* Decode result status */
 typedef enum {
@@ -103,6 +109,44 @@ const char* decoder_get_version(void);
  * @return FFmpeg version string
  */
 const char* decoder_get_ffmpeg_version(void);
+
+// ===========================
+// Audio API
+// ===========================
+
+/**
+ * Initialize audio decoder
+ * @param codec_type Audio codec type (AudioCodecType)
+ * @param sample_rate Sample rate in Hz
+ * @param channels Number of channels
+ * @return 0 on success, negative value on failure
+ */
+int decoder_init_audio(AudioCodecType codec_type, int sample_rate, int channels);
+
+/**
+ * Send encoded audio data to decoder
+ * @param data Encoded audio data pointer
+ * @param size Data length
+ * @param pts Presentation timestamp
+ * @return DecodeStatus
+ */
+DecodeStatus decoder_send_audio_packet(const uint8_t* data, int size, int64_t pts);
+
+/**
+ * Receive decoded audio frame
+ * @param frame_info Output audio frame information structure pointer
+ * @return DecodeStatus
+ */
+DecodeStatus decoder_receive_audio_frame(AudioFrameInfo* frame_info);
+
+/**
+ * Flush audio decoder buffer
+ */
+void decoder_flush_audio(void);
+
+// ===========================
+// Memory API
+// ===========================
 
 /**
  * Memory allocation function (for JS calls)
