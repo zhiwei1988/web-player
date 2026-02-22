@@ -2,6 +2,7 @@ import { AudioPlayer } from '../audio/AudioPlayer.js';
 import { AVSync } from '../audio/AVSync.js';
 import { DataBufferQueue } from '../buffer/DataBufferQueue.js';
 import { WorkerBridge } from '../decoder/WorkerBridge.js';
+import { WebGLRenderer } from '../render/WebGLRenderer.js';
 import type { AudioCodecType, AudioFrame, CodecType, VideoFrame, DecoderStats } from '../decoder/types.js';
 
 export interface StreamConfig {
@@ -54,6 +55,7 @@ export class StreamInstance {
     private lastBytesReceived: number = 0;
 
     private audioContext: AudioContext | null = null;
+    private renderer: WebGLRenderer | null = null;
 
     private onStatusChange?: (status: StreamStatus) => void;
     private onStatsUpdate?: (stats: StreamStats) => void;
@@ -106,6 +108,11 @@ export class StreamInstance {
         if (this.audioPlayer) {
             this.audioPlayer.destroy();
             this.audioPlayer = null;
+        }
+
+        if (this.renderer) {
+            this.renderer.destroy();
+            this.renderer = null;
         }
 
         if (this.decoder) {
@@ -328,6 +335,27 @@ export class StreamInstance {
     }
 
     private renderFrame(frame: VideoFrame): void {
+        // Lazy init WebGL renderer on first frame
+        if (this.renderer === undefined || this.renderer === null) {
+            try {
+                this.renderer = new WebGLRenderer(this.canvas);
+            } catch {
+                this.renderer = null;
+            }
+        }
+
+        // WebGL path
+        if (this.renderer && this.renderer.isAvailable()) {
+            this.renderer.renderFrame(frame);
+            return;
+        }
+
+        // Context lost — drop renderer so next call falls through to Canvas2D
+        if (this.renderer && !this.renderer.isAvailable()) {
+            this.renderer = null;
+        }
+
+        // Canvas2D fallback
         const ctx = this.canvas.getContext('2d');
         if (!ctx) return;
 
